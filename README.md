@@ -4,6 +4,10 @@
   由 <b>星河拓航工作室</b>（Galaxy Exploration Studio）开发与维护
 </p>
 
+<p align="center">
+  <b>中文</b> · <a href="README.en.md">English</a>
+</p>
+
 **Spaceflight Simulator（航天模拟器）的游戏内模组**，在 `127.0.0.1:21578` 上开一个
 只读为主的 HTTP 接口，把游戏状态暴露给外部程序（例如 N.E.K.O. 的
 [航天模拟器助手](https://github.com/LShangPiao/n.e.k.o_plugin_sfs_bridge) 插件）。
@@ -93,7 +97,7 @@ overlay=true
 
 ```powershell
 curl http://127.0.0.1:21578/ping
-# {"ok":true,"mod":"sfs_agent","version":"0.2.0"}
+# {"ok":true,"mod":"sfs_agent","version":"0.3.0","key_injection":"on",...}
 ```
 
 ## 从源码编译
@@ -253,8 +257,6 @@ BuildState.main.SpawnBlueprint(blueprint, …)  -> 生成到建造场景
 > 实测后果是发射时结构散架、直接钻到地下，而且推力恒为 0t。
 > `POST /build_place` 现在会从游戏已加载的零件表里抄 `N`/`T` 并登记分级，
 > 但**摆放位置仍需正确的贴合间距**，所以能用蓝图就别自己拼。
-
-
 
 ## 单个放置零件（`/build_place`）
 
