@@ -370,73 +370,93 @@ namespace SfsAgent
                 }
 
                 object[] buttons = FindObjects(buttonType);
-                for (int i = 0; i < buttons.Length && labels.Count < MaxElements; i++)
+
+                // 命中判定会写 InputManager.mouseOverElement（游戏靠它画悬停高亮），
+                // 不还原的话所有按钮会挨个闪一遍。这里包起来，判完立刻恢复。
+                object savedHover = applyHitFilter ? BridgePointer.BeginHitTest() : null;
+                try
                 {
-                    object button = buttons[i];
-
-                    // 跳过被禁用的按钮（buttonEnabled 为 false）
-                    object enabled = BridgeState.Get(button, "buttonEnabled");
-                    if (enabled is bool && !(bool)enabled)
-                    {
-                        continue;
-                    }
-
-                    string label = ReadLabel(button);
-                    double px, py;
-                    bool hasPixel = TryGetPixel(button, screenW, screenH, out px, out py);
-                    if (label.Length == 0 && !hasPixel)
-                    {
-                        continue;
-                    }
-
-                    // 命中判定：这一点上真的点得到这个按钮吗？
+                    CollectButtons(buttons, applyHitFilter, screenW, screenH);
+                }
+                finally
+                {
                     if (applyHitFilter)
                     {
-                        // 屏外的元素既看不见、也无法按位置点击，直接不要。
-                        // 注意要先判这个：对屏外坐标调 CheckMouseOverState
-                        // 会抛异常，那样会返回「判定不可用」而把它们保留下来。
-                        if (!hasPixel)
-                        {
-                            continue;
-                        }
-                        double fx = screenW > 0 ? px / screenW : -1;
-                        double fy = screenH > 0 ? 1.0 - (py / screenH) : -1;
-                        if (!(fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1))
-                        {
-                            continue;
-                        }
-
-                        object hit;
-                        if (BridgePointer.HitTest(px, py, out hit)
-                            && !BridgePointer.HitMatches(hit, button))
-                        {
-                            continue;
-                        }
-                    }
-
-                    labels.Add(label);
-                    elements.Add(button);
-                    if (hasPixel)
-                    {
-                        pixelX.Add(px);
-                        pixelY.Add(py);
-                        double nx = screenW > 0 ? px / screenW : -1;
-                        double ny = screenH > 0 ? 1.0 - (py / screenH) : -1;
-                        normX.Add(nx >= 0 && nx <= 1 ? nx : -1);
-                        normY.Add(ny >= 0 && ny <= 1 ? ny : -1);
-                    }
-                    else
-                    {
-                        pixelX.Add(-1);
-                        pixelY.Add(-1);
-                        normX.Add(-1);
-                        normY.Add(-1);
+                        BridgePointer.EndHitTest(savedHover);
                     }
                 }
             }
             catch (Exception ex)
             {
                 lastError = ex.Message;
+            }
+        }
+
+        private static void CollectButtons(
+            object[] buttons, bool applyHitFilter, double screenW, double screenH)
+        {
+            for (int i = 0; i < buttons.Length && labels.Count < MaxElements; i++)
+            {
+                object button = buttons[i];
+
+                // 跳过被禁用的按钮（buttonEnabled 为 false）
+                object enabled = BridgeState.Get(button, "buttonEnabled");
+                if (enabled is bool && !(bool)enabled)
+                {
+                    continue;
+                }
+
+                string label = ReadLabel(button);
+                double px, py;
+                bool hasPixel = TryGetPixel(button, screenW, screenH, out px, out py);
+                if (label.Length == 0 && !hasPixel)
+                {
+                    continue;
+                }
+
+                if (applyHitFilter)
+                {
+                    // 屏外的元素既看不见、也无法按位置点击，直接不要。
+                    // 必须先判这个：对屏外坐标做命中判定拿不到结果，
+                    // 会被当成「判定不可用」而把它们保留下来。
+                    if (!hasPixel)
+                    {
+                        continue;
+                    }
+                    double fx = screenW > 0 ? px / screenW : -1;
+                    double fy = screenH > 0 ? 1.0 - (py / screenH) : -1;
+                    if (!(fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1))
+                    {
+                        continue;
+                    }
+
+                    // 命中判定：这一点上真的点得到这个按钮吗？
+                    object hit;
+                    if (BridgePointer.HitTest(px, py, out hit)
+                        && !BridgePointer.HitMatches(hit, button))
+                    {
+                        continue;
+                    }
+                }
+
+                labels.Add(label);
+                elements.Add(button);
+                if (hasPixel)
+                {
+                    pixelX.Add(px);
+                    pixelY.Add(py);
+                    double nx = screenW > 0 ? px / screenW : -1;
+                    double ny = screenH > 0 ? 1.0 - (py / screenH) : -1;
+                    normX.Add(nx >= 0 && nx <= 1 ? nx : -1);
+                    normY.Add(ny >= 0 && ny <= 1 ? ny : -1);
+                }
+                else
+                {
+                    pixelX.Add(-1);
+                    pixelY.Add(-1);
+                    normX.Add(-1);
+                    normY.Add(-1);
+                }
             }
         }
 

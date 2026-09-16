@@ -126,11 +126,55 @@ namespace SfsAgent
         }
 
         /// <summary>
+        /// 命中判定的前置准备：返回当前 mouseOverElement 以便还原。
+        ///
+        /// 为什么要还原：`CheckMouseOverState` 会写 `mouseOverElement`，
+        /// 而那是游戏**画悬停高亮**用的字段。逐个元素做判定却不还原的话，
+        /// 界面上所有按钮会依次闪一遍（用户肉眼可见）——
+        /// 实测就是这样，所以判定必须包在 Begin/End 之间。
+        /// </summary>
+        public static object BeginHitTest()
+        {
+            object im = inputManagerCache;
+            if (im == null)
+            {
+                im = FindInputManagerQuiet();
+            }
+            if (im == null)
+            {
+                return null;
+            }
+            return BridgeState.Get(im, "mouseOverElement");
+        }
+
+        public static void EndHitTest(object savedHover)
+        {
+            object im = inputManagerCache;
+            if (im == null)
+            {
+                return;
+            }
+            try
+            {
+                FieldInfo f = im.GetType().GetField(
+                    "mouseOverElement",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (f != null)
+                {
+                    f.SetValue(im, savedHover);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>
         /// 用游戏自己的命中判定问「这个像素点上是什么元素」。
         ///
         /// 返回 false 表示判定不可用（此时调用方应当**保留**元素，
         /// 退回到旧行为，而不是误删）。hit 为 null 表示这一点上什么都点不到。
-        /// 必须在主线程调用。
+        /// 必须在主线程调用；调用前后请配 BeginHitTest / EndHitTest。
         /// </summary>
         public static bool HitTest(double px, double py, out object hit)
         {
