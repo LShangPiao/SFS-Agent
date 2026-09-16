@@ -42,13 +42,36 @@
 自动打开可以关掉。配置文件是同目录下的 `sfs-agent.ini`（首次运行自动生成）：
 
 ```ini
-# 桥接服务端口
+# 桥接服务端口（改完要重启游戏）
 port=21578
 # 游戏启动后是否自动打开配置页
 open_browser=true
+# 是否进入 Agent 独占模式
+exclusive_input=false
+# 独占模式下是否显示屏幕提示
+overlay=true
 ```
 
 配置读不到就用默认值 —— 绝不因为缺配置而让模组不工作。
+
+配置页本身也能**直接编辑并保存**这些项：页面会动态列出 ini 里**所有**键值，
+所以自己加自定义项也可以（保存时只覆盖改动过的键，不会抹掉别的）。
+
+## Agent 独占模式
+
+`POST /exclusive {"on":true}`（或改 `exclusive_input=true` 后重启）会让游戏
+**只接受 agent 的注入**：
+
+- 用户自己的鼠标点击与键盘按键被吞掉（Harmony 拦截 `Input` 的鼠标/键盘查询）
+- agent 注入的按键与点击照常生效
+- 屏幕上显示上下**淡蓝色渐变** + **「Agent 操作中」** + 一个**「解除独占」**按钮
+- 解除方式：点那个按钮，或按 **F10**，或 `POST /exclusive {"on":false}`
+
+用户点「解除独占」时会退出独占并让这次点击不传给游戏，避免误操作。
+
+> 实现注记：覆盖层用 **Canvas + Image/Text** 全反射搭建。
+> 不用 `OnGUI` 是因为它需要 MonoBehaviour 上有 `OnGUI` 方法，
+> 而本模组基类不是 MonoBehaviour、也拿不到合适的挂载点。
 
 ## 安装
 
@@ -96,7 +119,11 @@ pwsh -File build.ps1
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/` | **内置配置页**（HTML 仪表盘，游戏启动时自动打开） |
+| GET | `/` | **内置配置页**（HTML 仪表盘 + 可编辑配置，游戏启动时自动打开） |
+| GET | `/config` | 读取全部配置（任意 key=value） |
+| POST | `/config` | 合并写入配置（只覆盖请求里出现的键） |
+| POST | `/camera` | 视角控制：`x` / `y` / `distance` / `zoom_delta` / `rotation` |
+| POST | `/exclusive` | 开关「Agent 独占模式」（`{"on":true}`，缺省则切换） |
 | GET | `/ping` | 存活检测，返回模组名、版本与按键注入状态 |
 | GET | `/health` | 健康检查 |
 | GET | `/state` | 飞行遥测 |

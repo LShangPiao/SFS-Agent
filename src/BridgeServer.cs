@@ -215,6 +215,22 @@ namespace SfsAgent
             {
                 payload = HandleScroll(body);
             }
+            else if (path == "/exclusive" && method == "POST")
+            {
+                payload = HandleExclusive(body);
+            }
+            else if (path == "/config" && method == "POST")
+            {
+                payload = BridgePage.MergeWriteJson(BridgeConfig.IniPath, body);
+            }
+            else if (path == "/config")
+            {
+                payload = BridgePage.ReadAllJson(BridgeConfig.IniPath);
+            }
+            else if (path == "/camera" && method == "POST")
+            {
+                payload = HandleCamera(body);
+            }
             else if (path == "/build_catalog")
             {
                 // 默认走 deep：在主线程调用游戏自己的 LoadParts() 拿全量零件名。
@@ -420,6 +436,76 @@ namespace SfsAgent
                 System.Threading.Thread.Sleep(100);
             }
             return BridgeParts.CatalogJson();
+        }
+
+        /// <summary>
+        /// 开关「Agent 独占模式」：开启后用户的鼠标与键盘被吞掉，游戏只接受 agent 的注入。
+        /// 屏幕上会显示提示（上下淡蓝渐变 + 「Agent 操作中」+ 一个「解除独占」按钮）。
+        /// 解除方式：点那个按钮，或按 F10。
+        /// </summary>
+        private static string HandleExclusive(string body)
+        {
+            string onStr = ExtractString(body, "on");
+            bool? want = null;
+            if (onStr != null)
+            {
+                string v = onStr.Trim().ToLowerInvariant();
+                if (v == "1" || v == "true" || v == "on")
+                {
+                    want = true;
+                }
+                else if (v == "0" || v == "false" || v == "off")
+                {
+                    want = false;
+                }
+            }
+            if (want == null)
+            {
+                // 没给就切换
+                want = !BridgeOverlay.Exclusive;
+            }
+
+            BridgeOverlay.Exclusive = want.Value;
+            BridgeOverlay.WantVisible = want.Value;
+            System.Threading.Thread.Sleep(120);
+
+            return "{\"ok\":true,\"exclusive\":" + (want.Value ? "true" : "false")
+                + ",\"overlay\":\"" + Escape(BridgeOverlay.Status()) + "\"}";
+        }
+
+        /// <summary>
+        /// 视角控制。可选字段：x / y（相机位置）、distance（绝对距离）、
+        /// zoom_delta（相对缩放，正数拉远）、rotation（角度）。
+        /// 缺省字段不动。
+        /// </summary>
+        private static string HandleCamera(string body)
+        {
+            double x = ExtractNumber(body, "x");
+            double y = ExtractNumber(body, "y");
+            double dist = ExtractNumber(body, "distance");
+            double zoom = ExtractNumber(body, "zoom_delta");
+            double rot = ExtractNumber(body, "rotation");
+
+            bool hasX = body != null && body.IndexOf("\"x\"", StringComparison.Ordinal) >= 0;
+            bool hasY = body != null && body.IndexOf("\"y\"", StringComparison.Ordinal) >= 0;
+            bool hasDist = body != null && body.IndexOf("\"distance\"", StringComparison.Ordinal) >= 0;
+            bool hasZoom = body != null && body.IndexOf("\"zoom_delta\"", StringComparison.Ordinal) >= 0;
+            bool hasRot = body != null && body.IndexOf("\"rotation\"", StringComparison.Ordinal) >= 0;
+
+            if (!hasX && !hasY && !hasDist && !hasZoom && !hasRot)
+            {
+                return "{\"ok\":false,\"error\":\"需要至少一个字段：x / y / distance / zoom_delta / rotation\"}";
+            }
+
+            BridgeCamera.Reset();
+            BridgeCamera.Enqueue(
+                hasX ? x : double.NaN,
+                hasY ? y : double.NaN,
+                hasDist ? dist : double.NaN,
+                hasZoom ? zoom : double.NaN,
+                hasRot ? rot : double.NaN);
+            System.Threading.Thread.Sleep(200);
+            return BridgeCamera.ResultJson();
         }
 
         /// <summary>列出游戏存档里的蓝图（走 Blueprint_Saving.GetBlueprintsList）。</summary>

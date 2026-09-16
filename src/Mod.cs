@@ -99,6 +99,23 @@ namespace SfsAgent
                 }
             }
 
+            // 独占模式与覆盖层：从配置里恢复上次的选择
+            try
+            {
+                BridgeOverlay.Exclusive = BridgePage.ReadFlag(
+                    BridgeConfig.IniPath, "exclusive_input", false);
+                bool overlayOn = BridgePage.ReadFlag(BridgeConfig.IniPath, "overlay", true);
+                BridgeOverlay.WantVisible = BridgeOverlay.Exclusive && overlayOn;
+                if (BridgeOverlay.Exclusive)
+                {
+                    Log("exclusive input mode restored from config");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("exclusive restore failed: " + ex.Message);
+            }
+
             try
             {
                 BridgePatch.Apply();
@@ -167,6 +184,7 @@ namespace SfsAgent
     {
         public static int Port = 21578;
         public static bool OpenBrowser = true;
+        public static string IniPath = "";
 
         /// <summary>读取 Mods/SFS-Agent/sfs-agent.ini；读不到就用默认值。</summary>
         public static void Load()
@@ -178,7 +196,8 @@ namespace SfsAgent
                 {
                     return;
                 }
-                BridgePage.LoadConfig(Path.Combine(dir, "sfs-agent.ini"), out Port, out OpenBrowser);
+                IniPath = Path.Combine(dir, "sfs-agent.ini");
+                BridgePage.LoadConfig(IniPath, out Port, out OpenBrowser);
             }
             catch (Exception ex)
             {
@@ -277,6 +296,8 @@ namespace SfsAgent
                 BridgePointer.Tick();
                 BridgeParts.Tick();
                 BridgeBlueprint.Tick();
+                BridgeCamera.Tick();
+                BridgeOverlay.Tick();
             }
             catch
             {

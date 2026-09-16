@@ -39,6 +39,11 @@ namespace SfsAgent
 
         private static int frameId;
         private static int lastSeenFrame = int.MinValue;
+        private const int KeyCodeF10 = 285;
+
+        /// <summary>agent 注入的鼠标按键编号（0=左 1=右 2=中）。</summary>
+        private static readonly List<int> ActiveMouse = new List<int>();
+        private static readonly List<int> PendingMouse = new List<int>();
 
         public static bool Installed;
         public static string InstallInfo = "";
@@ -98,6 +103,11 @@ namespace SfsAgent
                         }
                         Pending.Clear();
                     }
+                    if (PendingMouse.Count > 0)
+                    {
+                        ActiveMouse.AddRange(PendingMouse);
+                        PendingMouse.Clear();
+                    }
                 }
 
                 long now = DateTime.UtcNow.Ticks;
@@ -117,6 +127,12 @@ namespace SfsAgent
                     {
                         Released.RemoveAt(i);
                     }
+                }
+
+                // 鼠标注入只维持几帧，够游戏读到即可
+                if (ActiveMouse.Count > 0 && (frameId % 6) == 0)
+                {
+                    ActiveMouse.Clear();
                 }
             }
             catch (Exception ex)
@@ -140,22 +156,30 @@ namespace SfsAgent
         {
             try
             {
-                if (Active.Count == 0)
-                {
-                    return true;
-                }
                 int key;
                 if (!TryKey(__args, out key))
                 {
                     return true;
                 }
-                for (int i = 0; i < Active.Count; i++)
+
+                // 1) agent 注入的键优先
+                if (Active.Count > 0)
                 {
-                    if (Active[i].Key == key && !Active[i].Expired)
+                    for (int i = 0; i < Active.Count; i++)
                     {
-                        __result = true;
-                        return false;
+                        if (Active[i].Key == key && !Active[i].Expired)
+                        {
+                            __result = true;
+                            return false;
+                        }
                     }
+                }
+
+                // 2) 独占模式：吞掉用户自己的按键，游戏只接受 agent 的注入
+                if (BridgeOverlay.Exclusive)
+                {
+                    __result = false;
+                    return false;
                 }
             }
             catch
@@ -169,29 +193,44 @@ namespace SfsAgent
         {
             try
             {
-                if (Active.Count == 0)
-                {
-                    return true;
-                }
                 int key;
                 if (!TryKey(__args, out key))
                 {
                     return true;
                 }
-                for (int i = 0; i < Active.Count; i++)
+
+                // 独占模式下 F10 作为「解除」的快捷键（鼠标被吞掉了，留个后门）
+                if (BridgeOverlay.Exclusive && key == KeyCodeF10)
                 {
-                    Injection inj = Active[i];
-                    if (inj.Key != key || inj.Expired)
+                    BridgeOverlay.Exclusive = false;
+                    BridgeOverlay.WantVisible = false;
+                    __result = true;
+                    return false;
+                }
+
+                if (Active.Count > 0)
+                {
+                    for (int i = 0; i < Active.Count; i++)
                     {
-                        continue;
+                        Injection inj = Active[i];
+                        if (inj.Key != key || inj.Expired)
+                        {
+                            continue;
+                        }
+                        // 只在注入生效后的那一帧算作“刚按下”，避免重复触发（分级只能触发一次）
+                        if (inj.StartFrame == frameId)
+                        {
+                            __result = true;
+                            return false;
+                        }
+                        return true;
                     }
-                    // 只在注入生效后的那一帧算作“刚按下”，避免重复触发（分级只能触发一次）
-                    if (inj.StartFrame == frameId)
-                    {
-                        __result = true;
-                        return false;
-                    }
-                    return true;
+                }
+
+                if (BridgeOverlay.Exclusive)
+                {
+                    __result = false;
+                    return false;
                 }
             }
             catch
@@ -204,28 +243,100 @@ namespace SfsAgent
         {
             try
             {
-                if (Released.Count == 0)
-                {
-                    return true;
-                }
                 int key;
                 if (!TryKey(__args, out key))
                 {
                     return true;
                 }
-                for (int i = 0; i < Released.Count; i++)
+                if (Released.Count > 0)
                 {
-                    if (Released[i].Key == key && Released[i].StartFrame == frameId)
+                    for (int i = 0; i < Released.Count; i++)
                     {
-                        __result = true;
-                        return false;
+                        if (Released[i].Key == key && Released[i].StartFrame == frameId)
+                        {
+                            __result = true;
+                            return false;
+                        }
                     }
+                }
+                if (BridgeOverlay.Exclusive)
+                {
+                    __result = false;
+                    return false;
                 }
             }
             catch
             {
             }
             return true;
+        }
+
+        // -- 鼠标（独占时吞掉用户点击，但放行「解除」按钮上的点击）-------------
+
+        public static bool GetMousePrefix(object[] __args, ref bool __result)
+        {
+            try
+            {
+                if (ActiveMouse.Count > 0)
+                {
+                    int btn;
+                    if (TryKey(__args, out btn) && ActiveMouse.Contains(btn))
+                    {
+                        __result = true;
+                        return false;
+                    }
+                }
+
+                if (!BridgeOverlay.Exclusive)
+                {
+                    return true;
+                }
+
+                // 用户点在「解除」按钮上：放行这次点击，并退出独占
+                BridgeOverlay.RefreshGeometry();
+                double mx, my;
+                if (TryMousePosition(out mx, out my) && BridgeOverlay.IsUnlockHit(mx, my))
+                {
+                    BridgeOverlay.Exclusive = false;
+                    BridgeOverlay.WantVisible = false;
+                    __result = false;   // 这次点击不传给游戏
+                    return false;
+                }
+
+                __result = false;       // 其余点击一律吞掉
+                return false;
+            }
+            catch
+            {
+            }
+            return true;
+        }
+
+        private static bool TryMousePosition(out double x, out double y)
+        {
+            x = 0;
+            y = 0;
+            try
+            {
+                Type inputType = BridgeState.FindType("UnityEngine.Input");
+                object p = BridgeState.GetStatic(inputType, "mousePosition");
+                if (p == null)
+                {
+                    return false;
+                }
+                // Unity 的屏幕坐标原点在左下角，这里换算成左上角
+                double px = BridgeState.ToDouble(BridgeState.Get(p, "x"), 0);
+                double py = BridgeState.ToDouble(BridgeState.Get(p, "y"), 0);
+                double h = BridgeState.ToDouble(
+                    BridgeState.GetStatic(BridgeState.FindType("UnityEngine.Screen"), "height"), 0);
+                x = px;
+                y = (h > 0 ? h : py) - py;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static bool TryKey(object[] args, out int key)
@@ -281,6 +392,13 @@ namespace SfsAgent
                 patched += PatchOne(harmony, inputType, "GetKey", keyCodeType, pKey);
                 patched += PatchOne(harmony, inputType, "GetKeyDown", keyCodeType, pDown);
                 patched += PatchOne(harmony, inputType, "GetKeyUp", keyCodeType, pUp);
+
+                // 鼠标：独占模式需要把用户的点击也吞掉
+                MethodInfo pMouse = typeof(BridgeKeys).GetMethod(
+                    "GetMousePrefix", BindingFlags.Public | BindingFlags.Static);
+                patched += PatchOne(harmony, inputType, "GetMouseButton", typeof(int), pMouse);
+                patched += PatchOne(harmony, inputType, "GetMouseButtonDown", typeof(int), pMouse);
+                patched += PatchOne(harmony, inputType, "GetMouseButtonUp", typeof(int), pMouse);
 
                 if (patched == 0)
                 {
