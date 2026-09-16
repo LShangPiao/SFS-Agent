@@ -69,6 +69,13 @@ namespace SfsAgent
                 captureRequested = false;
                 Capture();
             }
+            if (verifyRequested)
+            {
+                verifyRequested = false;
+                int idx = verifyIndex;
+                verifyIndex = -1;
+                verifyResult = VerifyHit(idx);
+            }
             if (clickRequested)
             {
                 clickRequested = false;
@@ -76,6 +83,18 @@ namespace SfsAgent
                 clickIndex = -1;
                 ClickIndex(index);
             }
+        }
+
+        private static volatile bool verifyRequested;
+        private static int verifyIndex = -1;
+        public static string verifyResult = "";
+
+        /// <summary>HTTP 线程：请求在主线程做一次「点击前命中验证」。</summary>
+        public static void RequestVerify(int index)
+        {
+            verifyIndex = index;
+            verifyResult = "";
+            verifyRequested = true;
         }
 
         // -- 基础设施 ---------------------------------------------------------
@@ -370,21 +389,7 @@ namespace SfsAgent
                 }
 
                 object[] buttons = FindObjects(buttonType);
-
-                // 命中判定会写 InputManager.mouseOverElement（游戏靠它画悬停高亮），
-                // 不还原的话所有按钮会挨个闪一遍。这里包起来，判完立刻恢复。
-                object savedHover = applyHitFilter ? BridgePointer.BeginHitTest() : null;
-                try
-                {
-                    CollectButtons(buttons, applyHitFilter, screenW, screenH);
-                }
-                finally
-                {
-                    if (applyHitFilter)
-                    {
-                        BridgePointer.EndHitTest(savedHover);
-                    }
-                }
+                CollectButtons(buttons, applyHitFilter, screenW, screenH);
             }
             catch (Exception ex)
             {
@@ -417,8 +422,6 @@ namespace SfsAgent
                 if (applyHitFilter)
                 {
                     // 屏外的元素既看不见、也无法按位置点击，直接不要。
-                    // 必须先判这个：对屏外坐标做命中判定拿不到结果，
-                    // 会被当成「判定不可用」而把它们保留下来。
                     if (!hasPixel)
                     {
                         continue;
@@ -430,13 +433,17 @@ namespace SfsAgent
                         continue;
                     }
 
-                    // 命中判定：这一点上真的点得到这个按钮吗？
-                    object hit;
-                    if (BridgePointer.HitTest(px, py, out hit)
-                        && !BridgePointer.HitMatches(hit, button))
+                    // 非激活对象不要（例如已经切走但还挂在场景里的界面）。
+                    object active = BridgeState.Get(button, "activeInHierarchy");
+                    if (active is bool && !(bool)active)
                     {
                         continue;
                     }
+
+                    // 注意：这里**故意不做**游戏自己的命中判定。
+                    // 那需要调 InputManager.CheckMouseOverState，而它会写游戏的
+                    // 悬停状态，逐元素调用会让界面上所有按钮依次高亮闪一遍
+                    // （用户肉眼可见，实测确认）。遮挡情况改在点击时单独验证。
                 }
 
                 labels.Add(label);
@@ -457,6 +464,46 @@ namespace SfsAgent
                     normX.Add(-1);
                     normY.Add(-1);
                 }
+            }
+        }
+
+        /// <summary>
+        /// 点击前验证：这个位置上，游戏认为命中的是不是我们要点的那个元素？
+        ///
+        /// 只调用**一次**（点击时本来就会高亮被点的按钮，不会造成闪烁）。
+        /// 返回空串表示一致或无法判定；否则返回一句说明，供上层如实告知。
+        /// 必须在主线程调用。
+        /// </summary>
+        public static string VerifyHit(int index)
+        {
+            try
+            {
+                if (index < 0 || index >= elements.Count)
+                {
+                    return "";
+                }
+                if (pixelX[index] < 0 || pixelY[index] < 0)
+                {
+                    return "";
+                }
+                object hit;
+                if (!BridgePointer.HitTest(pixelX[index], pixelY[index], out hit))
+                {
+                    return "";
+                }
+                if (BridgePointer.HitMatches(hit, elements[index]))
+                {
+                    return "";
+                }
+                if (hit == null)
+                {
+                    return "该位置上游戏认为点不到任何元素（界面可能已被遮挡或已切换）";
+                }
+                return "该位置上游戏认为命中的是别的东西，可能界面已经变了";
+            }
+            catch
+            {
+                return "";
             }
         }
 

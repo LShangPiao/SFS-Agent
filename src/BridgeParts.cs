@@ -762,78 +762,23 @@ namespace SfsAgent
             Array arr = result as Array;
             int count = arr == null ? 0 : arr.Length;
 
-            // SpawnBlueprint 只是**创建**零件对象：统计、分级栏都能看到它们，
-            // 但主视口渲染的是 BuildGrid 的内容，没注册进去就看不见。
-            // 所以必须再手动加进建造网格。
+            // 注意：**不要**再调 BuildGrid.AddParts —— SpawnBlueprint 已经把这些
+            // 零件登记进建造网格了。重复登记会抛异常，而且零件数会 +2 而不是 +1
+            // （实测：121 -> 123）。这里只需要把镜头挪过去。
             if (arr != null && arr.Length > 0)
             {
                 steps += "spawn=" + arr.Length + ";";
-                AddToBuildGrid(buildStateType, buildState, arr);
                 SetCamera(buildStateType, buildState, arr);
             }
             return count;
         }
 
-        private static object GetBuildGrid(Type buildStateType, object buildState)
-        {
-            try
-            {
-                object grid = BridgeState.Get(buildState, "buildGrid");
-                if (grid != null)
-                {
-                    return grid;
-                }
-                Type mgrType = BridgeState.FindType("SFS.Builds.BuildManager");
-                object mgr = BridgeState.GetStatic(mgrType, "main");
-                return BridgeState.Get(mgr, "buildGrid");
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static void AddToBuildGrid(Type buildStateType, object buildState, Array parts)
-        {
-            try
-            {
-                object grid = GetBuildGrid(buildStateType, buildState);
-                if (grid == null)
-                {
-                    steps += "grid=missing;";
-                    return;
-                }
-                MethodInfo add = null;
-                MethodInfo[] ms = grid.GetType().GetMethods(
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                for (int i = 0; i < ms.Length; i++)
-                {
-                    if (ms[i].Name == "AddParts" && ms[i].GetParameters().Length == 4)
-                    {
-                        add = ms[i];
-                        break;
-                    }
-                }
-                if (add == null)
-                {
-                    steps += "gridAdd=notfound;";
-                    return;
-                }
-                add.Invoke(grid, new object[] { true, true, true, parts });
-                steps += "gridAdd=ok;";
-            }
-            catch (Exception ex)
-            {
-                steps += "gridAdd=" + ex.GetType().Name + ";";
-            }
-        }
-
         /// <summary>
         /// 把摄像机挪到新零件上。
         ///
-        /// 这里**不用** BuildState.CenterCameraOnParts：它内部依赖建造网格，
-        /// 零件还没进网格时会把镜头带到莫名其妙的地方（实测主视口直接空了）。
-        /// 改为显式设置 BuildCamera 的 CameraPosition。
+        /// 这里**不用** BuildState.CenterCameraOnParts：它依赖建造网格的内部状态，
+        /// 实测会把镜头带到莫名其妙的地方，导致零件生成了但主视口里一片空白
+        /// （这才是「看不到零件」的真正原因）。改为显式设置 BuildCamera.CameraPosition。
         /// </summary>
         private static void SetCamera(Type buildStateType, object buildState, Array parts)
         {

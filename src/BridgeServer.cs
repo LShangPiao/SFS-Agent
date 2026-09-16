@@ -222,6 +222,28 @@ namespace SfsAgent
                 bool deep = query.IndexOf("deep=0", StringComparison.Ordinal) < 0;
                 payload = HandleBuildCatalog(deep);
             }
+            else if (path == "/debug_hit")
+            {
+                // 参数按**归一化 0-1** 给，内部换算成像素
+                double nx = QueryNumber(query, "x");
+                double ny = QueryNumber(query, "y");
+                if (nx <= 0 && ny <= 0)
+                {
+                    nx = 0.5;
+                    ny = 0.5;
+                }
+                double sw = QueryNumber(query, "w");
+                double sh = QueryNumber(query, "h");
+                if (sw <= 0)
+                {
+                    sw = 1600;
+                }
+                if (sh <= 0)
+                {
+                    sh = 837;
+                }
+                payload = BridgePointer.HitTestVerbose(nx * sw, (1.0 - ny) * sh);
+            }
             else if (path == "/debug_parts")
             {
                 payload = HandleDebugParts();
@@ -411,6 +433,39 @@ namespace SfsAgent
             return BridgeParts.ResultJson();
         }
 
+        /// <summary>
+        /// 从查询串里取一个数值（形如 "x=0.5&amp;y=0.3"）。
+        /// 不能复用 ExtractNumber —— 那个是给 JSON body 用的，按带引号的 key 找。
+        /// </summary>
+        private static double QueryNumber(string query, string key)
+        {
+            if (string.IsNullOrEmpty(query))
+            {
+                return 0;
+            }
+            string[] parts = query.Split('&');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                int eq = parts[i].IndexOf('=');
+                if (eq <= 0)
+                {
+                    continue;
+                }
+                if (!string.Equals(parts[i].Substring(0, eq).Trim(), key,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                double v;
+                if (double.TryParse(parts[i].Substring(eq + 1).Trim(), NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out v))
+                {
+                    return v;
+                }
+            }
+            return 0;
+        }
+
         private static string Escape(string s)
         {
             if (string.IsNullOrEmpty(s))
@@ -470,13 +525,24 @@ namespace SfsAgent
             double nx, ny;
             if (BridgeUi.TryGetNormalized(index, out nx, out ny))
             {
+                // 点击前验证一次命中（只调一次，不会像逐元素过滤那样造成闪烁）
+                BridgeUi.RequestVerify(index);
+                System.Threading.Thread.Sleep(120);
+                string mismatch = BridgeUi.verifyResult;
+
                 BridgePointer.Reset();
                 BridgePointer.EnqueueClick(nx, ny, 2);
                 if (BridgePointer.WaitIdle(2000)
                     && BridgePointer.LastError.Length == 0
                     && BridgePointer.LastResult.Length > 0)
                 {
-                    return BridgePointer.ToJson(true);
+                    string json = BridgePointer.ToJson(true);
+                    if (mismatch.Length > 0)
+                    {
+                        json = json.Substring(0, json.Length - 1)
+                            + ",\"warning\":\"" + Escape(mismatch) + "\"}";
+                    }
+                    return json;
                 }
             }
 

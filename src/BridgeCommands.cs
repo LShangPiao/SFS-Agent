@@ -127,40 +127,79 @@ namespace SfsAgent
             return BridgeState.Unwrap(BridgeState.Get(pc, "player"));
         }
 
+        /// <summary>
+        /// 写 SFS 的 *_Local 包装器里的真实值。
+        ///
+        /// 注意：不同版本里 `Value` 有的是**字段**、有的是**属性** ——
+        /// 之前只找字段，导致 set_throttle / throttle_on / rcs_* 全部报
+        /// 「Value field not found on Bool_Local」而失效（实测踩到）。
+        /// 读取侧 BridgeState.Unwrap 本来就兼顾两者，这里补齐写入侧。
+        /// </summary>
         private static void SetLocal(object wrapper, double value)
         {
             if (wrapper == null)
             {
                 throw new Exception("target member missing");
             }
-            FieldInfo f = wrapper.GetType().GetField(
-                "Value",
+
+            Type t = wrapper.GetType();
+            const BindingFlags F =
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+            FieldInfo f = t.GetField("Value", F);
+            if (f != null)
+            {
+                f.SetValue(wrapper, Coerce(value, f.FieldType));
+                return;
+            }
+
+            PropertyInfo p = t.GetProperty("Value", F);
+            if (p != null && p.CanWrite)
+            {
+                p.SetValue(wrapper, Coerce(value, p.PropertyType), null);
+                return;
+            }
+
+            throw new Exception("no writable 'Value' on " + t.Name
+                + " (fields: " + FieldNames(t) + ")");
+        }
+
+        private static object Coerce(double value, Type target)
+        {
+            if (target == typeof(float))
+            {
+                return (float)value;
+            }
+            if (target == typeof(double))
+            {
+                return value;
+            }
+            if (target == typeof(int))
+            {
+                return (int)value;
+            }
+            if (target == typeof(bool))
+            {
+                return value > 0.5;
+            }
+            return Convert.ChangeType(value, target, CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>出错时把可用字段名列出来，便于定位。</summary>
+        private static string FieldNames(Type t)
+        {
+            StringBuilder sb = new StringBuilder();
+            FieldInfo[] fs = t.GetFields(
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (f == null)
+            for (int i = 0; i < fs.Length && i < 8; i++)
             {
-                throw new Exception("Value field not found on " + wrapper.GetType().Name);
+                if (i > 0)
+                {
+                    sb.Append(",");
+                }
+                sb.Append(fs[i].Name);
             }
-            Type ft = f.FieldType;
-            if (ft == typeof(float))
-            {
-                f.SetValue(wrapper, (float)value);
-            }
-            else if (ft == typeof(double))
-            {
-                f.SetValue(wrapper, value);
-            }
-            else if (ft == typeof(int))
-            {
-                f.SetValue(wrapper, (int)value);
-            }
-            else if (ft == typeof(bool))
-            {
-                f.SetValue(wrapper, value > 0.5);
-            }
-            else
-            {
-                f.SetValue(wrapper, Convert.ChangeType(value, ft, CultureInfo.InvariantCulture));
-            }
+            return sb.ToString();
         }
 
         private static void Execute(Command cmd)

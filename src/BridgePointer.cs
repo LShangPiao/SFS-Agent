@@ -170,16 +170,173 @@ namespace SfsAgent
         }
 
         /// <summary>
-        /// 用 Unity 的 EventSystem 做命中判定：问「这个像素点上最上层的是什么」。
+        /// 诊断：某个像素点上，EventSystem 和 SFS 自己的 InputManager 分别认为
+        /// 命中了什么。用来判断 SFS 到底走不走 Unity 的 EventSystem。
+        /// </summary>
+        public static string HitTestVerbose(double px, double py)
+        {
+            StringBuilder sb = new StringBuilder(512);
+            sb.Append("{\"px\":").Append(Num(px)).Append(",\"py\":").Append(Num(py));
+
+            // EventSystem
+            sb.Append(",\"event_system\":");
+            try
+            {
+                Type esType = BridgeState.FindType("UnityEngine.EventSystems.EventSystem");
+                if (esType == null)
+                {
+                    sb.Append("\"<no type>\"");
+                }
+                else
+                {
+                    object es = BridgeState.GetStatic(esType, "current");
+                    if (es == null)
+                    {
+                        sb.Append("null");
+                    }
+                    else
+                    {
+                        object hitGo;
+                        bool ok = HitTestEventSystem(px, py, out hitGo);
+                        sb.Append("{\"available\":").Append(ok ? "true" : "false");
+                        sb.Append(",\"hit\":\"")
+                          .Append(hitGo == null ? "" : Esc(GoName(hitGo)))
+                          .Append("\"}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.Append("\"error:").Append(Esc(ex.Message)).Append("\"");
+            }
+
+            // SFS InputManager
+            sb.Append(",\"sfs_input_manager\":");
+            try
+            {
+                object im = FindInputManagerQuiet();
+                if (im == null)
+                {
+                    sb.Append("null");
+                }
+                else
+                {
+                    object touch = MakeTouchPosition(px, py);
+                    MethodInfo check = FindMethod(im.GetType(), "CheckMouseOverState", 1);
+                    object hovered = null;
+                    if (touch != null && check != null)
+                    {
+                        // 诊断用，读写一次即可；这里不还原也无所谓（用户不在看）
+                        check.Invoke(im, new object[] { touch });
+                        hovered = BridgeState.Get(im, "mouseOverElement");
+                    }
+                    sb.Append("{\"hit\":\"")
+                      .Append(hovered == null ? "" : Esc(ToStringSafe(hovered)))
+                      .Append("\"}");
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.Append("\"error:").Append(Esc(ex.Message)).Append("\"");
+            }
+
+            sb.Append("}");
+            return sb.ToString();
+        }
+
+        private static string GoName(object go)
+        {
+            try
+            {
+                object n = BridgeState.Get(go, "name");
+                if (n != null)
+                {
+                    return Convert.ToString(n, CultureInfo.InvariantCulture) ?? "";
+                }
+                // 逐级向上拼出路径，便于判断命中的是什么
+                StringBuilder sb = new StringBuilder(96);
+                object tr = BridgeState.Get(go, "transform");
+                for (int i = 0; i < 5 && tr != null; i++)
+                {
+                    object nn = BridgeState.Get(tr, "name");
+                    if (nn != null)
+                    {
+                        sb.Insert(0, "/" + Convert.ToString(nn, CultureInfo.InvariantCulture));
+                    }
+                    tr = BridgeState.Get(tr, "parent");
+                }
+                return sb.ToString();
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        private static string ToStringSafe(object o)
+        {
+            try
+            {
+                return Convert.ToString(o, CultureInfo.InvariantCulture) ?? "";
+            }
+            catch
+            {
+                return "";
+            }
+        }
+
+        /// <summary>
+        /// 命中判定：问「这个像素点上，游戏认为命中哪个元素」。
         ///
-        /// **不用 SFS 的 InputManager.CheckMouseOverState**：那个会写游戏自己的
-        /// 悬停状态，逐元素调用会让界面上所有按钮依次高亮闪一遍（用户肉眼可见，
-        /// 实测确认）。EventSystem.RaycastAll 是纯查询，没有任何副作用。
+        /// 用 SFS 自己的 `InputManager.CheckMouseOverState`。
+        /// **不要拿它去逐个元素过滤整个界面** —— 它会写游戏的悬停状态，
+        /// 那样所有按钮会依次高亮闪一遍（实测确认，用户肉眼可见）。
+        /// 只在**点击前验证一次**使用，那时高亮发生在被点的按钮上，是正常的。
         ///
-        /// 返回 false 表示判定不可用（调用方应保留元素，退回旧行为）；
-        /// hit 为 null 表示这一点上什么都点不到。必须在主线程调用。
+        /// 注意：Unity 的 EventSystem.RaycastAll 对 SFS **无效**（返回空），
+        /// 因为 SFS 用的是自己的输入系统，不走 Unity UI 的射线。
+        ///
+        /// 返回 false 表示判定不可用。必须在主线程调用。
         /// </summary>
         public static bool HitTest(double px, double py, out object hit)
+        {
+            hit = null;
+            try
+            {
+                object im = inputManagerCache;
+                if (im == null)
+                {
+                    im = FindInputManagerQuiet();
+                }
+                if (im == null)
+                {
+                    return false;
+                }
+                object touch = MakeTouchPosition(px, py);
+                if (touch == null)
+                {
+                    return false;
+                }
+                MethodInfo check = FindMethod(im.GetType(), "CheckMouseOverState", 1);
+                if (check == null)
+                {
+                    return false;
+                }
+                check.Invoke(im, new object[] { touch });
+                hit = BridgeState.Get(im, "mouseOverElement");
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 诊断用：EventSystem 的判定结果（对 SFS 通常为空）。
+        /// 保留它是为了以后能一眼确认「SFS 不走 Unity EventSystem」这个结论。
+        /// </summary>
+        public static bool HitTestEventSystem(double px, double py, out object hit)
         {
             hit = null;
             try
