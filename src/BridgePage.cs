@@ -240,7 +240,7 @@ namespace SfsAgent
             sb.Append("api_cmd:'\u98de\u884c\u6307\u4ee4',api_cam:'\u89c6\u89d2\u63a7\u5236',");
             sb.Append("api_excl:'Agent \u72ec\u5360\u6a21\u5f0f',api_cfg:'\u8bfb\u5199\u914d\u7f6e',");
             sb.Append("h_excl:'Agent \u72ec\u5360\u6a21\u5f0f',");
-            sb.Append("excl_desc:'\u5f00\u542f\u540e\u53ea\u63a5\u53d7 agent \u7684\u64cd\u4f5c\uff0c\u5ffd\u7565\u7528\u6237\u7684\u9f20\u6807\u4e0e\u952e\u76d8\u3002\u89e3\u9664\uff1a\u70b9\u5c4f\u5e55\u4e0a\u7684\u300c\u89e3\u9664\u72ec\u5360\u300d\u6216\u6309 F10\u3002',");
+            sb.Append("excl_desc:'\u5f00\u542f\u540e\u53ea\u63a5\u53d7 agent \u7684\u64cd\u4f5c\uff0c\u5ffd\u7565\u7528\u6237\u7684\u9f20\u6807\u4e0e\u952e\u76d8\u3002\u89e3\u9664\uff1a\u5728\u672c\u9875\u518d\u70b9\u4e00\u6b21\uff08\u6216\u6309 F10 \u5e94\u6025\uff09\u3002',");
             sb.Append("excl_on:'\u5f00\u542f\u72ec\u5360',excl_off:'\u5173\u95ed\u72ec\u5360',");
             sb.Append("excl_state_on:'\u5f53\u524d\uff1a\u72ec\u5360\u4e2d',excl_state_off:'\u5f53\u524d\uff1a\u666e\u901a',");
             sb.Append("h_cfg:'\u914d\u7f6e',");
@@ -286,7 +286,7 @@ namespace SfsAgent
             sb.Append("api_cmd:'Flight commands',api_cam:'Camera control',");
             sb.Append("api_excl:'Agent exclusive mode',api_cfg:'Read / write config',");
             sb.Append("h_excl:'Agent Exclusive Mode',");
-            sb.Append("excl_desc:'When on, only the agent can control the game \u2014 your mouse and keyboard are ignored. Unlock via the on-screen button or F10.',");
+            sb.Append("excl_desc:'When on, only the agent can control the game \u2014 your mouse and keyboard are ignored. Turn it off from this page (or press F10 as an emergency escape).',");
             sb.Append("excl_on:'Enable exclusive',excl_off:'Disable exclusive',");
             sb.Append("excl_state_on:'now: exclusive',excl_state_off:'now: normal',");
             sb.Append("h_cfg:'Configuration',");

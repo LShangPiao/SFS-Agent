@@ -30,24 +30,7 @@ namespace SfsAgent
             return Lang == "en" ? "Agent controlling" : "Agent \u64cd\u4f5c\u4e2d";
         }
 
-        private static string TextUnlock()
-        {
-            return Lang == "en" ? "Release control" : "\u89e3\u9664\u72ec\u5360";
-        }
-
-        // 解除按钮的屏幕区域（像素，左上角原点）
-        private const double BtnW = 148;
-        private const double BtnH = 30;
-        private const double BtnTop = 62;
-        private const double HitInset = 3;   // 判定往内缩一点，边缘不误触
-
-        private static double unlockX;
-        private static double unlockY;
-        private static double unlockW = BtnW;
-        private static double unlockH = BtnH;
-
         private static object root;          // Canvas 所在的 GameObject
-        private static object unlockLabel;   // 「解除独占」的文字组件
         private static object workLabel;     // 「Agent 操作中」的文字组件
         private static bool built;
         private static bool buildFailed;
@@ -62,22 +45,11 @@ namespace SfsAgent
             return built ? "overlay ready" : "overlay not built";
         }
 
-        /// <summary>用户是否点在「解除」按钮上。</summary>
-        public static bool IsUnlockHit(double screenX, double screenY)
-        {
-            if (!built)
-            {
-                return false;
-            }
-            // 判定区域与按钮视觉严格对齐，并往内缩 HitInset，避免边缘误触
-            return screenX >= unlockX + HitInset
-                && screenX <= unlockX + unlockW - HitInset
-                && screenY >= unlockY + HitInset
-                && screenY <= unlockY + unlockH - HitInset;
-        }
-
         // -- 生命周期 ---------------------------------------------------------
 
+        /// <summary>
+        /// 语言切换时刷新文字。注意游戏内已无按钮，解除入口在配置页（+F10 应急）。
+        /// </summary>
         public static void Tick()
         {
             if (!WantVisible)
@@ -96,13 +68,10 @@ namespace SfsAgent
             if (built)
             {
                 SetActive(true);
-
-                // 语言切换时刷新文字
                 if (_lastLang != Lang)
                 {
                     _lastLang = Lang;
                     SetMember(workLabel, "text", TextWorking());
-                    SetMember(unlockLabel, "text", TextUnlock());
                 }
             }
         }
@@ -377,47 +346,8 @@ namespace SfsAgent
                 Squash(textRt, 1.08, 0.90);   // 压扁一点
                 workLabel = text;
 
-                // ---- 解除按钮（用九宫格圆角 sprite，pill 感）----
-                object btnRt = NewUiElement("unlock", canvas, imageType);
-                unlockW = BtnW;
-                unlockH = BtnH;
-                SetMember(btnRt, "anchorMin", MakeVector2(0.5, 1));
-                SetMember(btnRt, "anchorMax", MakeVector2(0.5, 1));
-                SetMember(btnRt, "pivot", MakeVector2(0.5, 1));
-                SetMember(btnRt, "sizeDelta", MakeVector2(BtnW, BtnH));
-                unlockY = BtnTop;
-                SetMember(btnRt, "anchoredPosition", MakeVector2(0, -BtnTop));
-                object btnImg = GetComponent(btnRt, imageType);
-                SetMember(btnImg, "color", MakeColor(0.12, 0.20, 0.36, 0.94));
-                object sprite = GetRoundedSprite();
-                if (sprite != null)
-                {
-                    SetMember(btnImg, "sprite", sprite);
-                    // Image.Type.Sliced = 1
-                    SetMember(btnImg, "type", Enum.ToObject(T("UnityEngine.UI.Image+Type"), 1));
-                    // pixelsPerUnitMultiplier 调小 => sprite 九宫格被放大 => 圆角更明显。
-                    // 不设的话 30px 高的按钮上圆角只有几个像素，肉眼看还是直角。
-                    SetMember(btnImg, "pixelsPerUnitMultiplier", 0.35f);
-                }
-
-                object btnTextRt = NewUiElement("unlockText", canvas, textType);
-                SetMember(btnTextRt, "anchorMin", MakeVector2(0.5, 1));
-                SetMember(btnTextRt, "anchorMax", MakeVector2(0.5, 1));
-                SetMember(btnTextRt, "pivot", MakeVector2(0.5, 1));
-                SetMember(btnTextRt, "sizeDelta", MakeVector2(BtnW, BtnH));
-                SetMember(btnTextRt, "anchoredPosition", MakeVector2(0, -BtnTop));
-                unlockLabel = GetComponent(btnTextRt, textType);
-                SetMember(unlockLabel, "text", TextUnlock());
-                if (font != null)
-                {
-                    SetMember(unlockLabel, "font", font);
-                }
-                SetMember(unlockLabel, "fontSize", 15);
-                SetMember(unlockLabel, "alignment", Enum.ToObject(
-                    T("UnityEngine.TextAnchor"), 4)); // MiddleCenter
-                SetMember(unlockLabel, "color", MakeColor(1.0, 0.80, 0.90, 1.0));
-                SetMember(unlockLabel, "raycastTarget", false);
-                Squash(btnTextRt, 1.10, 0.90);
+                // 注：这里**刻意不放**「解除独占」按钮。
+                // 解除入口统一放在配置页（一键开关），游戏内只留 F10 作为应急后门。
 
                 _lastLang = Lang;
                 built = true;
@@ -447,22 +377,5 @@ namespace SfsAgent
             }
         }
 
-        /// <summary>按实际屏幕尺寸更新解除按钮的命中区域（每条 Tick 调）。</summary>
-        public static void RefreshGeometry()
-        {
-            if (!built)
-            {
-                return;
-            }
-            try
-            {
-                Type st = T("UnityEngine.Screen");
-                double w = BridgeState.ToDouble(BridgeState.GetStatic(st, "width"), 1600);
-                unlockX = w / 2 - unlockW / 2;
-            }
-            catch
-            {
-            }
-        }
     }
 }

@@ -292,51 +292,16 @@ namespace SfsAgent
                     return true;
                 }
 
-                // 用户点在「解除」按钮上：放行这次点击，并退出独占
-                BridgeOverlay.RefreshGeometry();
-                double mx, my;
-                if (TryMousePosition(out mx, out my) && BridgeOverlay.IsUnlockHit(mx, my))
-                {
-                    BridgeOverlay.Exclusive = false;
-                    BridgeOverlay.WantVisible = false;
-                    __result = false;   // 这次点击不传给游戏
-                    return false;
-                }
-
-                __result = false;       // 其余点击一律吞掉
+                // 独占模式：用户的点击一律吞掉。
+                // 解除入口不在这里 —— 游戏内不再有按钮，改由配置页开关，
+                // 另保留 F10 作为应急后门（见 GetKeyDownPrefix）。
+                __result = false;
                 return false;
             }
             catch
             {
             }
             return true;
-        }
-
-        private static bool TryMousePosition(out double x, out double y)
-        {
-            x = 0;
-            y = 0;
-            try
-            {
-                Type inputType = BridgeState.FindType("UnityEngine.Input");
-                object p = BridgeState.GetStatic(inputType, "mousePosition");
-                if (p == null)
-                {
-                    return false;
-                }
-                // Unity 的屏幕坐标原点在左下角，这里换算成左上角
-                double px = BridgeState.ToDouble(BridgeState.Get(p, "x"), 0);
-                double py = BridgeState.ToDouble(BridgeState.Get(p, "y"), 0);
-                double h = BridgeState.ToDouble(
-                    BridgeState.GetStatic(BridgeState.FindType("UnityEngine.Screen"), "height"), 0);
-                x = px;
-                y = (h > 0 ? h : py) - py;
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         private static bool TryKey(object[] args, out int key)
