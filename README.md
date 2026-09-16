@@ -102,6 +102,8 @@ pwsh -File build.ps1
 | GET | `/state` | 飞行遥测 |
 | GET | `/build` | 火箭零件构成 |
 | GET | `/build_catalog` | 可用零件名（默认在主线程调用游戏自己的 `LoadParts()` 取全量） |
+| GET | `/blueprints` | 玩家存档里的蓝图列表 |
+| POST | `/blueprint_load` | 按名字加载整枚蓝图到建造场景（造火箭最可靠的路径） |
 | GET | `/ui` | 当前界面可点击元素清单 |
 | GET | `/screenshot` | 抓取画面，返回 PNG |
 | POST | `/command` | 飞行指令：`set_throttle` / `throttle_on` / `throttle_off` / `stage` / `staging_program` / `rcs_on` / `rcs_off` / `rcs_toggle` |
@@ -185,24 +187,71 @@ SFS.Input.InputManager.TouchEnd (index, InputType, TouchPosition)
 `vk` 用虚拟键码（与 UnityEngine.KeyCode 数值一致），可传 `hold_ms` 控制按住时长。
 `GET /ping` 的 `key_injection` 字段会如实报告拦截是否装上了。
 
-## 在指定位置放置零件（不需要拖动）
+## 造火箭：优先加载蓝图
 
-建造界面里零件必须从左侧菜单**拖**到火箭上，纯点击放不上去。
-`POST /build_place {"name": "...", "x": 0, "y": 0}` 直接构造游戏自己的数据结构：
+游戏里的火箭设计以**蓝图文件**存在
+`Saving/Blueprints/<名字>/Blueprint.txt`，格式是带零件尺寸与分级的 JSON：
+
+```jsonc
+{
+  "center": 7.0,
+  "parts": [
+    {
+      "n": "Fuel Tank",                       // 零件内部名
+      "p": { "x": 7.0, "y": 8.0 },            // 贴合点坐标
+      "o": { "x": 1.0, "y": 1.0, "z": 0.0 },  // 朝向：x/y 是表面偏移，z 是角度
+      "t": "-Infinity",
+      "N": { "width_original": 2.0, "width_a": 2.0, "width_b": 2.0,
+             "height": 4.0, "fuel_percent": 1.0 },   // ← 尺寸与缩放
+      "T": { "color_tex": "_", "shape_tex": "_" }    // ← 纹理
+    }
+  ],
+  "stages": [ { "stageId": 1, "partIndexes": [5, 6] } ]
+}
+```
+
+模组走**游戏自己的加载路径**，不自己拼零件：
 
 ```
-SFS.Parts.PartSave { name, position, orientation }
+Blueprint_Saving.GetBlueprintsList()          -> 蓝图名字列表
+Blueprint_Saving.LoadBlueprint(name, cb)      -> 游戏解析（回调拿到 Blueprint）
+BuildState.main.SpawnBlueprint(blueprint, …)  -> 生成到建造场景
+```
+
+实测加载玩家的 141 零件火箭：质量 712.4t、推力 356t、推重比 0.51 —— 数据与蓝图一致。
+
+> **为什么不用「自己拼 PartSave」**：`N`（尺寸）、`T`（纹理）、`stages`
+> 三者缺一不可。只给名字和坐标的话，零件没有尺寸、也不属于任何分级 ——
+> 实测后果是发射时结构散架、直接钻到地下，而且推力恒为 0t。
+> `POST /build_place` 现在会从游戏已加载的零件表里抄 `N`/`T` 并登记分级，
+> 但**摆放位置仍需正确的贴合间距**，所以能用蓝图就别自己拼。
+
+
+
+## 单个放置零件（`/build_place`）
+
+建造界面里零件必须从左侧菜单**拖**到火箭上，纯点击放不上去。
+`POST /build_place {"name": "...", "x": 0, "y": 0, "stack": "top"}` 直接构造游戏自己的数据结构：
+
+```
+SFS.Parts.PartSave { name, position, orientation, NUMBER_VARIABLES, TEXT_VARIABLES }
   -> SFS.Builds.Blueprint(parts, stages, center, rotation, interiorView)
     -> SFS.Builds.BuildState.main.SpawnBlueprint(blueprint, applyUndo, logger)
 ```
+
+`stack` 可选：`top` / `bottom` 会**按已有零件的贴合点自动算位置**，
+`none`（默认）则用你给的 `x`/`y`。
 
 零件名必须是合法的（先 `GET /build_catalog` 查询）：
 
 ```jsonc
 // GET /build_catalog
-{"ok":true,"ready":true,"count":14,"source":"scene_parts",
- "parts":["Fuel Tank","Fairing","Valiant Engine", ...]}
+{"ok":true,"ready":true,"count":66,"source":"scene_parts+PartsLoader.LoadParts()",
+ "parts":["Fuel Tank","Engine Valiant","Cone","Probe", ...]}
 ```
+
+注意**内部名与界面显示名不同**（界面 "Valiant Engine" = 内部 `Engine Valiant`，
+界面 "Aerodynamic Nose Cone" = 内部 `Cone`），目录里给的是内部名。
 
 `source` 会说明零件名是从哪里拿到的，便于排障。
 `POST /build_place` 会先校验零件名确实在目录里，**不确定的名字一律拒绝**，
@@ -246,18 +295,21 @@ SFS.Parts.PartSave { name, position, orientation }
 | 界面元素枚举（过滤屏外与未激活元素） | ✅ |
 | 按键注入（Esc / 空格 / Q 等，**游戏不必在前台**） | ✅ |
 | 飞行控制：点火、油门、分级、RCS | ✅ 实测速度随油门持续上升 |
-| 建造：在指定坐标放置零件 + 镜头自动跟随 | ✅ 零件数与质量精确 +1 |
+| 建造：**加载整枚蓝图**（自带尺寸/纹理/分级，由游戏解析） | ✅ 实测 141 零件、712.4t、推力 356t |
+| 建造：列出玩家存档里的蓝图 | ✅ 20 个 |
+| 建造：单个零件定点放置 + 镜头跟随 | ✅ 零件数与质量精确 +1 |
 | 截图 | ✅ |
 | 内置配置页 + 启动时自动开浏览器 | ✅ |
-| **从零搭出一枚能正常飞的完整火箭** | ⚠️ 见下方「已知限制」 |
+| **从零手拼一枚能飞的完整火箭** | ⚠️ 见下方「已知限制」 |
 
 ## 已知限制
 
-- **摆放零件时必须给对间距，否则火箭连不成一体。**
-  `build_place` 会把你给的坐标**原样**交给游戏（不做吸附），所以如果零件之间
-  距离不对（实测：把引擎放在离燃料罐 6 米处），发射时结构会散架 ——
-  整枚火箭只剩 1 个零件，直接钻到地下。
-  摆放时应参考零件实际尺寸，或把新零件紧贴已有零件放置。
+- **「从零手拼火箭」仍不完整，推荐改用加载蓝图。**
+  蓝图的零件坐标是**贴合点**，间距由零件自身高度决定，而各零件的高度变量名
+  并不统一（`height` / `width` / `size` / `height_max`，有的零件干脆没有）。
+  实测按固定间距（例如都取 4.0）拼出来的火箭，发射时上面的零件会掉下来把火箭砸爆。
+  `stack=top/bottom` 会尝试按 `N.height` 自动贴合，但这个值未必可靠。
+  **能用蓝图就用蓝图。**
 - `build_place` **不做吸附与碰撞检查**，可能产生重叠。
 - 界面枚举会过滤掉**屏外**与**未激活**的元素；**被其它界面遮挡**的元素无法在
   枚举阶段识别 —— 识别它们需要调用游戏自己的命中判定
