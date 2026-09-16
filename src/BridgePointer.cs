@@ -170,38 +170,89 @@ namespace SfsAgent
         }
 
         /// <summary>
-        /// 用游戏自己的命中判定问「这个像素点上是什么元素」。
+        /// 用 Unity 的 EventSystem 做命中判定：问「这个像素点上最上层的是什么」。
         ///
-        /// 返回 false 表示判定不可用（此时调用方应当**保留**元素，
-        /// 退回到旧行为，而不是误删）。hit 为 null 表示这一点上什么都点不到。
-        /// 必须在主线程调用；调用前后请配 BeginHitTest / EndHitTest。
+        /// **不用 SFS 的 InputManager.CheckMouseOverState**：那个会写游戏自己的
+        /// 悬停状态，逐元素调用会让界面上所有按钮依次高亮闪一遍（用户肉眼可见，
+        /// 实测确认）。EventSystem.RaycastAll 是纯查询，没有任何副作用。
+        ///
+        /// 返回 false 表示判定不可用（调用方应保留元素，退回旧行为）；
+        /// hit 为 null 表示这一点上什么都点不到。必须在主线程调用。
         /// </summary>
         public static bool HitTest(double px, double py, out object hit)
         {
             hit = null;
             try
             {
-                object im = inputManagerCache;
-                if (im == null)
-                {
-                    im = FindInputManagerQuiet();
-                }
-                if (im == null)
+                Type esType = BridgeState.FindType("UnityEngine.EventSystems.EventSystem");
+                if (esType == null)
                 {
                     return false;
                 }
-                object touch = MakeTouchPosition(px, py);
-                if (touch == null)
+                object es = BridgeState.GetStatic(esType, "current");
+                if (es == null)
                 {
                     return false;
                 }
-                MethodInfo check = FindMethod(im.GetType(), "CheckMouseOverState", 1);
-                if (check == null)
+
+                Type pedType = BridgeState.FindType("UnityEngine.EventSystems.PointerEventData");
+                Type rrType = BridgeState.FindType("UnityEngine.EventSystems.RaycastResult");
+                if (pedType == null || rrType == null)
                 {
                     return false;
                 }
-                check.Invoke(im, new object[] { touch });
-                hit = BridgeState.Get(im, "mouseOverElement");
+
+                object vector = MakeVector2(px, py);
+                if (vector == null)
+                {
+                    return false;
+                }
+
+                object ped;
+                try
+                {
+                    ped = Activator.CreateInstance(pedType, new object[] { es });
+                }
+                catch
+                {
+                    return false;
+                }
+                PropertyInfo posProp = pedType.GetProperty("position");
+                if (posProp == null || !posProp.CanWrite)
+                {
+                    return false;
+                }
+                posProp.SetValue(ped, vector, null);
+
+                Type listType = typeof(List<>).MakeGenericType(new Type[] { rrType });
+                object list = Activator.CreateInstance(listType);
+
+                MethodInfo raycastAll = esType.GetMethod(
+                    "RaycastAll",
+                    BindingFlags.Public | BindingFlags.Instance,
+                    null,
+                    new Type[] { pedType, listType },
+                    null);
+                if (raycastAll == null)
+                {
+                    return false;
+                }
+                raycastAll.Invoke(es, new object[] { ped, list });
+
+                PropertyInfo countProp = listType.GetProperty("Count");
+                PropertyInfo itemProp = listType.GetProperty("Item");
+                if (countProp == null || itemProp == null)
+                {
+                    return false;
+                }
+                int count = Convert.ToInt32(countProp.GetValue(list, null));
+                if (count <= 0)
+                {
+                    return true; // 判定成功：这一点上什么都点不到
+                }
+
+                object result = itemProp.GetValue(list, new object[] { 0 });
+                hit = BridgeState.Get(result, "gameObject");
                 return true;
             }
             catch
@@ -210,26 +261,34 @@ namespace SfsAgent
             }
         }
 
-        /// <summary>命中对象是否就是该元素（或它的子/父对象）。</summary>
-        public static bool HitMatches(object hit, object element)
+        /// <summary>
+        /// EventSystem 命中的 GameObject 是否就是该元素（或它的子对象）。
+        /// 命中点常常落在按钮的子对象上，所以要沿 transform 往上找。
+        /// </summary>
+        public static bool HitMatches(object hitGo, object element)
         {
-            if (hit == null || element == null)
+            if (hitGo == null || element == null)
             {
                 return false;
             }
-            if (ReferenceEquals(hit, element))
-            {
-                return true;
-            }
             try
             {
-                object target = BridgeState.Get(element, "transform");
-                object tr = BridgeState.Get(hit, "transform");
+                object elementGo = BridgeState.Get(element, "gameObject");
+                if (elementGo == null)
+                {
+                    return false;
+                }
+                if (ReferenceEquals(hitGo, elementGo))
+                {
+                    return true;
+                }
+                object target = BridgeState.Get(elementGo, "transform");
+                object tr = BridgeState.Get(hitGo, "transform");
                 if (target == null || tr == null)
                 {
                     return false;
                 }
-                for (int i = 0; i < 10 && tr != null; i++)
+                for (int i = 0; i < 12 && tr != null; i++)
                 {
                     if (ReferenceEquals(tr, target))
                     {
