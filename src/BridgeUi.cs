@@ -186,18 +186,35 @@ namespace SfsAgent
             return "";
         }
 
+        private static bool InScreen(double x, double y, double w, double h)
+        {
+            if (w <= 0 || h <= 0)
+            {
+                return true;
+            }
+            return x >= 0 && x <= w && y >= 0 && y <= h;
+        }
+
         /// <summary>
         /// 取 UI 元素的屏幕像素坐标。
         ///
-        /// 优先用 RectTransform.GetWorldCorners 求矩形中心：
-        /// Screen Space Overlay 画布下世界坐标就是屏幕像素，而且矩形中心比
-        /// transform.position（枢轴点，常在角上）更能代表按钮实际可点区域，
-        /// 命中率明显更高。
+        /// 算**两个候选**并优先取落在屏幕内的那个：
+        ///   ① RectTransform.GetWorldCorners 的矩形中心 —— 比枢轴点更代表可点区域
+        ///   ② WorldToScreenPoint(null, transform.position) —— 旧路径
+        /// 为什么不能只用 ①：某些画布下 ① 给出的可能不是屏幕坐标，
+        /// 直接返回就会得到一堆「屏外」元素（表现为没有坐标），
+        /// 而 ② 反而是对的。
         /// </summary>
-        private static bool TryGetPixel(object button, out double px, out double py)
+        private static bool TryGetPixel(
+            object button, double screenW, double screenH, out double px, out double py)
         {
             px = 0;
             py = 0;
+            double c1x = 0, c1y = 0;
+            double c2x = 0, c2y = 0;
+            bool ok1 = false;
+            bool ok2 = false;
+
             try
             {
                 object tr = BridgeState.Get(button, "transform");
@@ -206,6 +223,7 @@ namespace SfsAgent
                     return false;
                 }
 
+                // 候选 ①：矩形四角求中心
                 Type v3 = BridgeState.FindType("UnityEngine.Vector3");
                 if (v3 != null)
                 {
@@ -220,22 +238,11 @@ namespace SfsAgent
                             gwc.Invoke(tr, new object[] { corners });
                             object c0 = corners.GetValue(0);
                             object c2 = corners.GetValue(2);
-                            double x0 = Convert.ToDouble(
-                                BridgeState.Get(c0, "x"), CultureInfo.InvariantCulture);
-                            double y0 = Convert.ToDouble(
-                                BridgeState.Get(c0, "y"), CultureInfo.InvariantCulture);
-                            double x2 = Convert.ToDouble(
-                                BridgeState.Get(c2, "x"), CultureInfo.InvariantCulture);
-                            double y2 = Convert.ToDouble(
-                                BridgeState.Get(c2, "y"), CultureInfo.InvariantCulture);
-                            double cx = (x0 + x2) / 2.0;
-                            double cy = (y0 + y2) / 2.0;
-                            if (cx != 0 || cy != 0)
-                            {
-                                px = cx;
-                                py = cy;
-                                return true;
-                            }
+                            c1x = (BridgeState.ToDouble(BridgeState.Get(c0, "x"), 0)
+                                   + BridgeState.ToDouble(BridgeState.Get(c2, "x"), 0)) / 2.0;
+                            c1y = (BridgeState.ToDouble(BridgeState.Get(c0, "y"), 0)
+                                   + BridgeState.ToDouble(BridgeState.Get(c2, "y"), 0)) / 2.0;
+                            ok1 = c1x != 0 || c1y != 0;
                         }
                         catch
                         {
@@ -243,43 +250,63 @@ namespace SfsAgent
                     }
                 }
 
-                // 退回 transform.position + WorldToScreenPoint
+                // 候选 ②：WorldToScreenPoint(null, position)
                 object worldPos = BridgeState.Get(tr, "position");
-                if (worldPos == null)
+                if (worldPos != null)
                 {
-                    return false;
+                    Type cameraType = BridgeState.FindType("UnityEngine.Camera");
+                    Type rtu = BridgeState.FindType("UnityEngine.RectTransformUtility");
+                    if (rtu != null)
+                    {
+                        MethodInfo m = rtu.GetMethod(
+                            "WorldToScreenPoint",
+                            BindingFlags.Public | BindingFlags.Static,
+                            null,
+                            new Type[] { cameraType, worldPos.GetType() },
+                            null);
+                        if (m != null)
+                        {
+                            object screen = m.Invoke(null, new object[] { null, worldPos });
+                            if (screen != null)
+                            {
+                                c2x = BridgeState.ToDouble(BridgeState.Get(screen, "x"), 0);
+                                c2y = BridgeState.ToDouble(BridgeState.Get(screen, "y"), 0);
+                                ok2 = true;
+                            }
+                        }
+                    }
                 }
-
-                Type cameraType = BridgeState.FindType("UnityEngine.Camera");
-                Type rtu = BridgeState.FindType("UnityEngine.RectTransformUtility");
-                if (rtu == null)
-                {
-                    return false;
-                }
-                MethodInfo m = rtu.GetMethod(
-                    "WorldToScreenPoint",
-                    BindingFlags.Public | BindingFlags.Static,
-                    null,
-                    new Type[] { cameraType, worldPos.GetType() },
-                    null);
-                if (m == null)
-                {
-                    return false;
-                }
-
-                object screen = m.Invoke(null, new object[] { null, worldPos });
-                if (screen == null)
-                {
-                    return false;
-                }
-                px = Convert.ToDouble(BridgeState.Get(screen, "x"), CultureInfo.InvariantCulture);
-                py = Convert.ToDouble(BridgeState.Get(screen, "y"), CultureInfo.InvariantCulture);
-                return true;
             }
             catch
             {
-                return false;
             }
+
+            if (ok1 && InScreen(c1x, c1y, screenW, screenH))
+            {
+                px = c1x;
+                py = c1y;
+                return true;
+            }
+            if (ok2 && InScreen(c2x, c2y, screenW, screenH))
+            {
+                px = c2x;
+                py = c2y;
+                return true;
+            }
+            // 都不在屏幕内：仍返回候选 ① 的原值，交由上层判为「无坐标」
+            if (ok1)
+            {
+                px = c1x;
+                py = c1y;
+                return true;
+            }
+            if (ok2)
+            {
+                px = c2x;
+                py = c2y;
+                return true;
+            }
+            return false;
         }
 
         // -- 枚举 -------------------------------------------------------------
@@ -356,15 +383,29 @@ namespace SfsAgent
 
                     string label = ReadLabel(button);
                     double px, py;
-                    bool hasPixel = TryGetPixel(button, out px, out py);
+                    bool hasPixel = TryGetPixel(button, screenW, screenH, out px, out py);
                     if (label.Length == 0 && !hasPixel)
                     {
                         continue;
                     }
 
                     // 命中判定：这一点上真的点得到这个按钮吗？
-                    if (applyHitFilter && hasPixel)
+                    if (applyHitFilter)
                     {
+                        // 屏外的元素既看不见、也无法按位置点击，直接不要。
+                        // 注意要先判这个：对屏外坐标调 CheckMouseOverState
+                        // 会抛异常，那样会返回「判定不可用」而把它们保留下来。
+                        if (!hasPixel)
+                        {
+                            continue;
+                        }
+                        double fx = screenW > 0 ? px / screenW : -1;
+                        double fy = screenH > 0 ? 1.0 - (py / screenH) : -1;
+                        if (!(fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1))
+                        {
+                            continue;
+                        }
+
                         object hit;
                         if (BridgePointer.HitTest(px, py, out hit)
                             && !BridgePointer.HitMatches(hit, button))

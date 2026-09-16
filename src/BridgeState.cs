@@ -94,7 +94,7 @@ namespace SfsAgent
             return v != null ? v : wrapper;
         }
 
-        private static double ToDouble(object o, double fallback)
+        public static double ToDouble(object o, double fallback)
         {
             if (o == null)
             {

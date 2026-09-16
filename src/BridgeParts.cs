@@ -36,6 +36,7 @@ namespace SfsAgent
 
         public static string LastResult = "";
         public static string LastError = "";
+        private static string steps = "";
 
         // 零件目录的缓存与请求标志。
         // 目录读取会碰 Unity 原生 API（Resources 等），**必须在主线程做**，
@@ -276,11 +277,27 @@ namespace SfsAgent
             }
             try
             {
+                // 目录没准备好就现场加载。
+                // 放置不应该依赖「先调过 /build_catalog」这种调用顺序 ——
+                // 上层忘了先查目录时，这里要自己兜住，而不是报一个莫名其妙的错。
+                if (!catalogReady || catalog.Count == 0)
+                {
+                    try
+                    {
+                        CaptureCatalog(true);
+                    }
+                    catch (Exception ex)
+                    {
+                        catalogError = ex.Message;
+                    }
+                    catalogReady = true;
+                }
+
+                steps = "";
                 PlacedCount = PlacePart(job);
                 LastResult = "placed " + job.Name + " at (" + Num(job.X) + ", " + Num(job.Y)
                     + "), count=" + PlacedCount;
-                LastError = "";
-            }
+                LastError = "";            }
             catch (Exception ex)
             {
                 PlacedCount = 0;
@@ -642,7 +659,8 @@ namespace SfsAgent
             if (!catalogReady || catalog.Count == 0)
             {
                 throw new Exception(
-                    "零件目录尚未加载。请先 GET /build_catalog，并确认游戏处于建造场景。");
+                    "读不到零件的名称清单，无法确认 '" + job.Name
+                    + "' 是合法零件名。请确认游戏处于建造场景。");
             }
             bool known = false;
             for (int i = 0; i < catalog.Count; i++)
@@ -744,34 +762,132 @@ namespace SfsAgent
             Array arr = result as Array;
             int count = arr == null ? 0 : arr.Length;
 
-            // 把摄像机移到新零件上，否则零件虽然生成了却不在视野里，
-            // 用户/智能体截图看过去还是一片空白网格。
+            // SpawnBlueprint 只是**创建**零件对象：统计、分级栏都能看到它们，
+            // 但主视口渲染的是 BuildGrid 的内容，没注册进去就看不见。
+            // 所以必须再手动加进建造网格。
             if (arr != null && arr.Length > 0)
             {
-                CenterCamera(buildStateType, buildState, arr);
+                steps += "spawn=" + arr.Length + ";";
+                AddToBuildGrid(buildStateType, buildState, arr);
+                SetCamera(buildStateType, buildState, arr);
             }
             return count;
         }
 
-        private static void CenterCamera(Type buildStateType, object buildState, Array parts)
+        private static object GetBuildGrid(Type buildStateType, object buildState)
         {
             try
             {
-                MethodInfo center = buildStateType.GetMethod(
-                    "CenterCameraOnParts",
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                if (center != null)
+                object grid = BridgeState.Get(buildState, "buildGrid");
+                if (grid != null)
                 {
-                    center.Invoke(buildState, new object[] { parts });
+                    return grid;
                 }
+                Type mgrType = BridgeState.FindType("SFS.Builds.BuildManager");
+                object mgr = BridgeState.GetStatic(mgrType, "main");
+                return BridgeState.Get(mgr, "buildGrid");
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void AddToBuildGrid(Type buildStateType, object buildState, Array parts)
+        {
+            try
+            {
+                object grid = GetBuildGrid(buildStateType, buildState);
+                if (grid == null)
+                {
+                    steps += "grid=missing;";
+                    return;
+                }
+                MethodInfo add = null;
+                MethodInfo[] ms = grid.GetType().GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                for (int i = 0; i < ms.Length; i++)
+                {
+                    if (ms[i].Name == "AddParts" && ms[i].GetParameters().Length == 4)
+                    {
+                        add = ms[i];
+                        break;
+                    }
+                }
+                if (add == null)
+                {
+                    steps += "gridAdd=notfound;";
+                    return;
+                }
+                add.Invoke(grid, new object[] { true, true, true, parts });
+                steps += "gridAdd=ok;";
             }
             catch (Exception ex)
             {
-                if (sources.Length > 0)
+                steps += "gridAdd=" + ex.GetType().Name + ";";
+            }
+        }
+
+        /// <summary>
+        /// 把摄像机挪到新零件上。
+        ///
+        /// 这里**不用** BuildState.CenterCameraOnParts：它内部依赖建造网格，
+        /// 零件还没进网格时会把镜头带到莫名其妙的地方（实测主视口直接空了）。
+        /// 改为显式设置 BuildCamera 的 CameraPosition。
+        /// </summary>
+        private static void SetCamera(Type buildStateType, object buildState, Array parts)
+        {
+            try
+            {
+                object cam = BridgeState.Get(buildState, "buildCamera");
+                if (cam == null)
                 {
-                    sources += "+";
+                    Type camType = BridgeState.FindType("SFS.Builds.BuildCamera");
+                    object[] found = BridgeState.FindObjects(camType);
+                    if (found.Length == 0)
+                    {
+                        steps += "camera=missing;";
+                        return;
+                    }
+                    cam = found[0];
                 }
-                sources += "centerCamera(failed:" + ex.GetType().Name + ")";
+
+                // 取新零件的平均位置作为镜头目标
+                double sx = 0;
+                double sy = 0;
+                int n = 0;
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    object pos = BridgeState.Get(parts.GetValue(i), "Position");
+                    if (pos == null)
+                    {
+                        continue;
+                    }
+                    sx += BridgeState.ToDouble(BridgeState.Get(pos, "x"), 0);
+                    sy += BridgeState.ToDouble(BridgeState.Get(pos, "y"), 0);
+                    n++;
+                }
+                if (n == 0)
+                {
+                    steps += "camera=noPos;";
+                    return;
+                }
+
+                object vector = MakeVector2(sx / n, sy / n);
+                PropertyInfo camPos = cam.GetType().GetProperty(
+                    "CameraPosition",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (camPos == null || !camPos.CanWrite)
+                {
+                    steps += "camera=noProp;";
+                    return;
+                }
+                camPos.SetValue(cam, vector, null);
+                steps += "camera=ok@" + Num(sx / n) + "," + Num(sy / n) + ";";
+            }
+            catch (Exception ex)
+            {
+                steps += "camera=" + ex.GetType().Name + ";";
             }
         }
 
@@ -816,6 +932,10 @@ namespace SfsAgent
             if (LastResult.Length > 0)
             {
                 sb.Append(",\"result\":\"").Append(Esc(LastResult)).Append("\"");
+            }
+            if (steps.Length > 0)
+            {
+                sb.Append(",\"steps\":\"").Append(Esc(steps)).Append("\"");
             }
             if (LastError.Length > 0)
             {
