@@ -105,9 +105,11 @@ namespace SfsAgent
             string[] parts = requestLine.Split(' ');
             string method = parts.Length > 0 ? parts[0].ToUpperInvariant() : "GET";
             string path = parts.Length > 1 ? parts[1] : "/";
+            string query = "";
             int q = path.IndexOf('?');
             if (q >= 0)
             {
+                query = path.Substring(q + 1);
                 path = path.Substring(0, q);
             }
 
@@ -171,7 +173,10 @@ namespace SfsAgent
             }
             else if (path == "/ping")
             {
-                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.2.0\"}";
+                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.3.0\""
+                    + ",\"key_injection\":\"" + (BridgeKeys.Installed ? "on" : "off") + "\""
+                    + ",\"key_injection_info\":\"" + Escape(BridgeKeys.InstallInfo) + "\""
+                    + "}";
             }
             else if (path == "/state")
             {
@@ -187,15 +192,38 @@ namespace SfsAgent
             }
             else if (path == "/click" && method == "POST")
             {
-                payload = HandleClick(body);
+                payload = HandleClick(body, false);
+            }
+            else if (path == "/click_raw" && method == "POST")
+            {
+                payload = HandleClick(body, true);
             }
             else if (path == "/key" && method == "POST")
             {
-                payload = HandleKey(body);
+                payload = HandleKey(body, false);
+            }
+            else if (path == "/key_raw" && method == "POST")
+            {
+                payload = HandleKey(body, true);
             }
             else if (path == "/scroll" && method == "POST")
             {
                 payload = HandleScroll(body);
+            }
+            else if (path == "/build_catalog")
+            {
+                // 默认走 deep：在主线程调用游戏自己的 LoadParts() 拿全量零件名。
+                // 传 deep=0 可只读缓存来源（更快）。
+                bool deep = query.IndexOf("deep=0", StringComparison.Ordinal) < 0;
+                payload = HandleBuildCatalog(deep);
+            }
+            else if (path == "/debug_parts")
+            {
+                payload = HandleDebugParts();
+            }
+            else if (path == "/build_place" && method == "POST")
+            {
+                payload = HandleBuildPlace(body);
             }
             else if (path == "/ui")
             {
@@ -255,11 +283,25 @@ namespace SfsAgent
             }
 
             BridgeCommands.Enqueue(name, value);
-            return "{\"ok\":true,\"queued\":\"" + name + "\"}";
+
+            // 指令由主线程执行；等它跑完再如实返回结果，
+            // 避免「已排队」被上层误当成「已执行成功」。
+            for (int i = 0; i < 20 && BridgeCommands.QueueLength > 0; i++)
+            {
+                System.Threading.Thread.Sleep(50);
+            }
+            System.Threading.Thread.Sleep(80);
+            return BridgeCommands.ToJson();
         }
 
-        /// <summary>点击：x、y 为相对游戏窗口客户区的归一化坐标（0-1）。</summary>
-        private static string HandleClick(string body)
+        /// <summary>
+        /// 点击。x、y 为相对游戏客户区的归一化坐标（0-1）。
+        ///
+        /// 默认走**游戏内输入派发**（SFS.Input.InputManager），不移动系统鼠标、
+        /// 不抢焦点，坐标命中判定也由游戏自己算，因此更准。
+        /// raw=true 时才用 Win32 模拟（会抢鼠标/焦点，仅在游戏内派发不可用时使用）。
+        /// </summary>
+        private static string HandleClick(string body, bool raw)
         {
             double x = ExtractNumber(body, "x");
             double y = ExtractNumber(body, "y");
@@ -267,16 +309,127 @@ namespace SfsAgent
             {
                 return "{\"ok\":false,\"error\":\"x and y must be within 0..1\"}";
             }
-            bool ok = BridgeInput.Click(x, y);
-            return BridgeInput.ToJson(ok);
+
+            if (raw)
+            {
+                return BridgeInput.ToJson(BridgeInput.Click(x, y));
+            }
+
+            BridgePointer.Reset();
+            BridgePointer.EnqueueClick(x, y, 2);
+            // 等按下与抬起都跑完再应答，避免「只按了没松」被当成点完
+            BridgePointer.WaitIdle(2000);
+            bool ok = BridgePointer.LastError.Length == 0 && BridgePointer.LastResult.Length > 0;
+            if (!ok && BridgePointer.LastError.Length == 0)
+            {
+                BridgePointer.LastError =
+                    "click state machine did not run (bridge frame loop inactive?)";
+            }
+            return BridgePointer.ToJson(ok);
         }
 
-        /// <summary>按键：vk 为 Win32 虚拟键码。</summary>
-        private static string HandleKey(string body)
+        /// <summary>
+        /// 按键。vk 为 Win32 虚拟键码（与 UnityEngine.KeyCode 数值一致）。
+        ///
+        /// 默认走**游戏内按键注入**（Harmony 拦截 UnityEngine.Input），
+        /// 不需要游戏在前台，也不会把按键打到别的程序里。
+        /// </summary>
+        private static string HandleKey(string body, bool raw)
         {
             double vk = ExtractNumber(body, "vk");
-            bool ok = BridgeInput.KeyPress((int)vk);
-            return BridgeInput.ToJson(ok);
+            int code = (int)vk;
+
+            if (raw)
+            {
+                return BridgeInput.ToJson(BridgeInput.KeyPress(code));
+            }
+
+            double holdMs = ExtractNumber(body, "hold_ms");
+            if (holdMs <= 0)
+            {
+                holdMs = 120;
+            }
+
+            BridgeKeys.Enqueue(code, (int)holdMs);
+            System.Threading.Thread.Sleep((int)holdMs + 60);
+            if (!BridgeKeys.Installed)
+            {
+                return "{\"ok\":false,\"mode\":\"in_game_key\",\"error\":\""
+                    + Escape(BridgeKeys.InstallInfo) + "\"}";
+            }
+            return "{\"ok\":true,\"mode\":\"in_game_key\",\"vk\":" + code
+                + ",\"hold_ms\":" + ((int)holdMs) + "}";
+        }
+
+        /// <summary>
+        /// 零件目录。
+        ///
+        /// 读取会碰 Unity 原生 API（Resources 等），**必须由主线程执行**：
+        /// 之前直接在 HTTP 线程上调，把游戏直接打崩了（Resources.LoadAll 的
+        /// 原生访问违例），所以这里只请求 + 等待，实际读取在 BridgeParts.Tick()。
+        /// </summary>
+        private static string HandleBuildCatalog(bool deep)
+        {
+            BridgeParts.RequestCatalog(deep);
+            for (int i = 0; i < 60 && !BridgeParts.CatalogReady; i++)
+            {
+                System.Threading.Thread.Sleep(100);
+            }
+            return BridgeParts.CatalogJson();
+        }
+
+        /// <summary>诊断：把几个可能的零件名来源一次性 dump 出来（主线程执行）。</summary>
+        private static string HandleDebugParts()
+        {
+            BridgeParts.RequestDiagnostics();
+            for (int i = 0; i < 30 && !BridgeParts.DiagnosticsReady; i++)
+            {
+                System.Threading.Thread.Sleep(100);
+            }
+            return BridgeParts.DiagnosticsJson();
+        }
+
+        /// <summary>把零件直接放到建造网格的指定坐标，不需要拖动。</summary>
+        private static string HandleBuildPlace(string body)
+        {
+            string name = ExtractString(body, "name");
+            if (string.IsNullOrEmpty(name))
+            {
+                return "{\"ok\":false,\"error\":\"missing name\"}";
+            }
+            double x = ExtractNumber(body, "x");
+            double y = ExtractNumber(body, "y");
+
+            BridgeParts.Reset();
+            BridgeParts.EnqueuePlace(name, x, y);
+            System.Threading.Thread.Sleep(250);
+            return BridgeParts.ResultJson();
+        }
+
+        private static string Escape(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder(s.Length + 8);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c == '"' || c == '\\')
+                {
+                    sb.Append('\\').Append(c);
+                }
+                else if (c < 32)
+                {
+                    sb.Append(' ');
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString();
         }
 
         /// <summary>滚轮：delta 为正向上、负向下（通常 ±120）。</summary>
@@ -293,14 +446,39 @@ namespace SfsAgent
 
         /// <summary>
         /// 按 /ui 清单的索引点击。
-        /// 走**游戏内事件注入**（直接触发按钮的 OnInputEnd），不移动系统鼠标。
+        ///
+        /// 首选**游戏内输入派发**（InputManager）：走游戏自己的命中判定与按钮接线，
+        /// 因此不会出现「返回成功但其实没点到」的情况，也不移动系统鼠标。
+        /// 只有在拿不到坐标（或派发不可用）时，才退回直接触发按钮事件。
         /// </summary>
         private static string HandleUiClick(string body)
         {
             int index = (int)ExtractNumber(body, "index");
+
+            // 清单可能还没抓过，或界面已变；索引越界时先重新抓一次
+            if (index < 0 || index >= BridgeUi.Count)
+            {
+                BridgeUi.Request();
+                System.Threading.Thread.Sleep(220);
+            }
+
+            double nx, ny;
+            if (BridgeUi.TryGetNormalized(index, out nx, out ny))
+            {
+                BridgePointer.Reset();
+                BridgePointer.EnqueueClick(nx, ny, 2);
+                if (BridgePointer.WaitIdle(2000)
+                    && BridgePointer.LastError.Length == 0
+                    && BridgePointer.LastResult.Length > 0)
+                {
+                    return BridgePointer.ToJson(true);
+                }
+            }
+
+            // 兜底：直接触发按钮的点击事件（注意：若按钮把逻辑接在 onClick 而非
+            // clickEvent 上，这条路径可能“成功但没有效果”，所以只作为最后手段）
             BridgeUi.ResetClickResult();
             BridgeUi.RequestClick(index);
-            // 点击必须在主线程执行，这里等它跑完
             System.Threading.Thread.Sleep(250);
             return BridgeUi.ClickResultJson();
         }

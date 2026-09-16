@@ -150,6 +150,101 @@ namespace SfsAgent
             return null;
         }
 
+        /// <summary>
+        /// 找出场景里所有某类型的对象（经 UnityEngine.Object.FindObjectsOfType）。
+        /// 全场景查找必须在主线程调用。
+        /// </summary>
+        public static object[] FindObjects(Type type)
+        {
+            if (type == null)
+            {
+                return new object[0];
+            }
+            Type uo = FindType("UnityEngine.Object");
+            if (uo == null)
+            {
+                return new object[0];
+            }
+            MethodInfo[] methods = uo.GetMethods(BindingFlags.Public | BindingFlags.Static);
+            for (int j = 0; j < methods.Length; j++)
+            {
+                MethodInfo m = methods[j];
+                if (m.Name != "FindObjectsOfType" && m.Name != "FindObjectsByType")
+                {
+                    continue;
+                }
+                ParameterInfo[] ps = m.GetParameters();
+                if (ps.Length < 1 || ps[0].ParameterType != typeof(Type))
+                {
+                    continue;
+                }
+                try
+                {
+                    object[] args = new object[ps.Length];
+                    args[0] = type;
+                    for (int k = 1; k < ps.Length; k++)
+                    {
+                        args[k] = ps[k].ParameterType.IsEnum
+                            ? Enum.ToObject(ps[k].ParameterType, 0)
+                            : Activator.CreateInstance(ps[k].ParameterType);
+                    }
+                    Array arr = m.Invoke(null, args) as Array;
+                    if (arr == null)
+                    {
+                        continue;
+                    }
+                    object[] result = new object[arr.Length];
+                    arr.CopyTo(result, 0);
+                    return result;
+                }
+                catch
+                {
+                }
+            }
+            return new object[0];
+        }
+
+        /// <summary>
+        /// 当前帧号。
+        ///
+        /// 帧循环补丁同时挂在多个 Update 上，同一帧会被调用多次；而按键与点击
+        /// 都必须严格按帧推进。这里返回一个**可比较**的帧号，各模块自己记住上次
+        /// 处理过的帧号 —— 注意不能做成「消费式」的 NewFrame()，否则同一帧里
+        /// 只有第一个模块能拿到 true，后面的模块会永远饿死。
+        /// 优先用 UnityEngine.Time.frameCount；取不到时按 8ms 合成一个伪帧号。
+        /// </summary>
+        public static int CurrentFrame()
+        {
+            int fc = UnityFrameCount();
+            if (fc >= 0)
+            {
+                return fc;
+            }
+            return (int)(DateTime.UtcNow.Ticks / (TimeSpan.TicksPerMillisecond * 8));
+        }
+
+        public static int UnityFrameCount()
+        {
+            Type t = FindType("UnityEngine.Time");
+            if (t == null)
+            {
+                return -1;
+            }
+            object v = GetStatic(t, "frameCount");
+            if (v == null)
+            {
+                return -1;
+            }
+            try
+            {
+                return Convert.ToInt32(v, CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
         public static void Capture()
         {
             try

@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using System.Text;
 
 namespace SfsAgent
 {
@@ -23,12 +24,69 @@ namespace SfsAgent
 
         public static string LastResult = "";
 
+        public static int QueueLength
+        {
+            get
+            {
+                lock (Gate)
+                {
+                    return Pending.Count;
+                }
+            }
+        }
+
         public static void Enqueue(string name, double value)
         {
+            // 清掉上一次的结果，避免 HTTP 线程读到陈旧值当成本次结果
+            LastResult = "";
             lock (Gate)
             {
                 Pending.Enqueue(new Command { Name = name, Value = value });
             }
+        }
+
+        /// <summary>如实报告执行结果：ok 表示主线程执行成功，否则给出原因。</summary>
+        public static string ToJson()
+        {
+            bool ok = LastResult == "ok";
+            StringBuilder sb = new StringBuilder(160);
+            sb.Append("{\"ok\":").Append(ok ? "true" : "false");
+            if (LastResult.Length > 0)
+            {
+                sb.Append(",\"result\":\"").Append(Escape(LastResult)).Append("\"");
+            }
+            else
+            {
+                sb.Append(",\"error\":\"指令尚未被执行（游戏可能没有运行或不在可操作场景）\"");
+            }
+            sb.Append("}");
+            return sb.ToString();
+        }
+
+        private static string Escape(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder(s.Length + 8);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c == '"' || c == '\\')
+                {
+                    sb.Append('\\').Append(c);
+                }
+                else if (c < 32)
+                {
+                    sb.Append(' ');
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString();
         }
 
         /// <summary>在主线程执行排队中的指令。</summary>
@@ -129,59 +187,68 @@ namespace SfsAgent
                 return;
             }
 
-            if (name == "stage")
+            if (name == "rcs_on" || name == "rcs_off" || name == "rcs_toggle")
             {
-                InvokeStage(player);
+                object arrowkeys = BridgeState.Get(player, "arrowkeys");
+                if (arrowkeys == null)
+                {
+                    throw new Exception("rocket.arrowkeys unavailable");
+                }
+                object rcs = BridgeState.Get(arrowkeys, "rcs");
+                if (rcs == null)
+                {
+                    throw new Exception("arrowkeys.rcs unavailable");
+                }
+                double target;
+                if (name == "rcs_toggle")
+                {
+                    target = ToDouble(BridgeState.Unwrap(rcs)) > 0.5 ? 0 : 1;
+                }
+                else
+                {
+                    target = name == "rcs_on" ? 1 : 0;
+                }
+                SetLocal(rcs, target);
+                return;
+            }
+
+            if (name == "stage" || name == "ignite")
+            {
+                // 分级由游戏自己的逻辑决定（哪一级、何时点火、音效、UI 刷新…），
+                // 与其猜内部实现，不如注入一次空格键，让游戏按原生流程执行。
+                // 注意：旧实现会在 Staging 上找“含 stag 的无参方法”，
+                // 结果命中 RemoveEmptyStages()，属于明确的 bug，已移除。
+                BridgeKeys.Enqueue(KeyCodeSpace, 140);
+                return;
+            }
+
+            if (name == "staging_program")
+            {
+                // 回车：执行火箭分级控制程序
+                BridgeKeys.Enqueue(KeyCodeEnter, 140);
                 return;
             }
 
             throw new Exception("unknown command: " + name);
         }
 
-        /// <summary>触发下一级分离。不同版本方法名可能不同，逐个尝试。</summary>
-        private static void InvokeStage(object player)
+        private const int KeyCodeSpace = 32;
+        private const int KeyCodeEnter = 13;
+
+        private static double ToDouble(object value)
         {
-            object staging = BridgeState.Get(player, "staging");
-            if (staging == null)
+            if (value == null)
             {
-                throw new Exception("staging unavailable");
+                return 0;
             }
-
-            string[] candidates = new string[]
+            try
             {
-                "ActivateNextStage", "ActivateStage", "NextStage", "Stage", "Separate"
-            };
-
-            Type t = staging.GetType();
-            for (int i = 0; i < candidates.Length; i++)
-            {
-                MethodInfo m = t.GetMethod(
-                    candidates[i],
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                    null,
-                    Type.EmptyTypes,
-                    null);
-                if (m != null)
-                {
-                    m.Invoke(staging, null);
-                    return;
-                }
+                return Convert.ToDouble(value, CultureInfo.InvariantCulture);
             }
-
-            // 退而求其次：找到任何名字含 "stag" 且无参的方法
-            MethodInfo[] all = t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            for (int i = 0; i < all.Length; i++)
+            catch
             {
-                if (all[i].GetParameters().Length == 0 &&
-                    all[i].Name.ToLowerInvariant().IndexOf("stag") >= 0 &&
-                    all[i].ReturnType == typeof(void))
-                {
-                    all[i].Invoke(staging, null);
-                    return;
-                }
+                return 0;
             }
-
-            throw new Exception("no staging method found on " + t.Name);
         }
     }
 }

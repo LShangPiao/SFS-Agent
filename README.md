@@ -62,18 +62,27 @@ pwsh -File build.ps1
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/ping` | 存活检测，返回模组名与版本 |
+| GET | `/ping` | 存活检测，返回模组名、版本与按键注入状态 |
 | GET | `/health` | 健康检查 |
 | GET | `/state` | 飞行遥测 |
 | GET | `/build` | 火箭零件构成 |
+| GET | `/build_catalog` | 可用零件名（默认在主线程调用游戏自己的 `LoadParts()` 取全量） |
 | GET | `/ui` | 当前界面可点击元素清单 |
 | GET | `/screenshot` | 抓取画面，返回 PNG |
-| POST | `/command` | 飞行指令：`set_throttle` / `throttle_on` / `throttle_off` / `stage` |
-| POST | `/ui_click` | 按索引点击界面元素 |
-| POST | `/click` | 按归一化坐标点击 |
-| POST | `/key` | 发送按键 |
-| POST | `/scroll` | 滚动 |
+| POST | `/command` | 飞行指令：`set_throttle` / `throttle_on` / `throttle_off` / `stage` / `staging_program` / `rcs_on` / `rcs_off` / `rcs_toggle` |
+| POST | `/ui_click` | 按索引点击界面元素（游戏内派发） |
+| POST | `/click` | 按归一化坐标点击（游戏内派发） |
+| POST | `/click_raw` | 同上，但用 Win32 模拟真实鼠标（**会抢鼠标与焦点**，仅排障用） |
+| POST | `/key` | 发送按键（游戏内注入，游戏不必在前台） |
+| POST | `/key_raw` | 同上，但用 Win32 `keybd_event`（**会抢焦点**，仅排障用） |
+| POST | `/build_place` | 把零件直接放到建造网格坐标（不需要拖动） |
+| POST | `/scroll` | 滚动（Win32，滚轮事件发给光标下的窗口） |
 | POST | `/debug_methods` | 诊断：打印某个元素的反射信息 |
+| POST | `/debug_parts` | 诊断：dump 零件名的各个来源 |
+
+> 所有会碰 Unity API 的操作都在**主线程**执行（HTTP 线程只入队 / 置标志）。
+> 这条约束是硬性的：曾经把 `Resources.LoadAll` 放在 HTTP 线程上调用，
+> 直接把游戏打崩了（原生访问违例，托管 try/catch 兜不住）。
 
 ### `/state` 返回示例
 
@@ -96,22 +105,73 @@ pwsh -File build.ps1
 置灰的按钮（`buttonEnabled == false`）会被自动过滤掉 —— 所以未选中存档时，
 存档界面上的 `Play` / `Rename` / `Delete` 不会出现在清单里。
 
-## 界面点击是「游戏内事件注入」
+## 点击不会抢走你的鼠标
 
-`POST /ui_click` **不会移动系统鼠标**：模组直接触发按钮自己的
-`clickEvent`（`UnityEvent<OnInputEndData>`），因此：
+`POST /ui_click` 与 `POST /click` **不会移动系统鼠标**，也不需要游戏窗口在前台。
 
-- ✅ 点击期间鼠标指针**不会移动**，你可以同时用电脑做别的事
-- ✅ 不需要把游戏窗口切到前台
-- ⚠️ 但点击**会真实改变游戏状态**（开始游戏、载入存档等）
+实现方式：调用 SFS 自己的输入派发入口
 
-> 实现注记（踩过的坑）：`SFS.UI.Button` 以**显式接口实现**提供
-> `SFS.Input.I_Touchable.OnInputEnd`，方法名为 `SFS.Input.I_Touchable.OnInputEnd`
-> 且是 private。这些方法**在游戏运行时无法通过 `GetMethods()` 枚举到**
-> （离线反射同一个 `Assembly-CSharp.dll` 却可以），因此走
-> `OnInputEnd` 的路径在游戏内不可用。`GetFields()` 运行时工作正常，
-> 所以实际生效的是字段路径 `clickEvent.Invoke(...)`，并以
-> `OnInputEnd`、`onClick` 作为兜底。
+```
+SFS.Input.InputManager.CheckMouseOverState(TouchPosition)
+SFS.Input.InputManager.InputStart(index, InputType, TouchPosition)
+SFS.Input.InputManager.TouchEnd (index, InputType, TouchPosition)
+```
+
+`InputManager` 内部会自己做命中判定并把结果写进 `mouseOverElement`，
+所以：
+
+- **必须先调 `CheckMouseOverState`** —— 不调的话 `InputStart` 用的会是上一次
+  （通常是 null）的悬停元素，点了等于没点
+- 命中判定由游戏自己做，比自己去比对按钮矩形准得多
+- 走的是游戏原生的按钮派发，因此 `clickEvent` / `onClick` 各种接线方式都能正确触发
+
+> 曾经的弯路：直接 `Invoke` 按钮的 `clickEvent`。它能点中一部分按钮，但
+> **按钮把逻辑接在 `onClick`（`OptionalDelegate`）上时会返回成功却毫无效果** ——
+> 实测主菜单 Esc 退出确认框的 Cancel 就是这种情况，属于「假成功」。
+> 现已统一走 `InputManager`，`clickEvent` 只作为拿不到坐标时的最后兜底。
+>
+> 另一个坑：`CheckMouseOverState` 等方法在运行时**无法通过 `GetMethods()` 枚举到
+> 显式接口实现**（离线反射同一个 `Assembly-CSharp.dll` 却可以），因此这里按
+> 方法名 + 参数个数查找，并用 `GetFields()` 读字段（字段读取运行时正常）。
+
+点击的按下与抬起**分帧执行**（一次真实点击本来就有按下-抬起过程），
+所以 `/click` 会等状态机跑完再应答。
+
+## 按键也不会抢焦点
+
+`POST /key` 通过 Harmony 拦截 `UnityEngine.Input.GetKey / GetKeyDown / GetKeyUp`
+来注入按键：
+
+- 只对我们正在注入的那几个键覆盖返回值，其余键一律走原方法
+- 游戏自己的输入逻辑完全不变，分级、转向、菜单都按原生行为工作
+- **不触碰系统输入，游戏不需要在前台**（实测游戏在后台时按 Esc 依然弹出了退出确认）
+- 出错时前缀一律放行原方法，绝不把游戏输入搞坏
+
+`vk` 用虚拟键码（与 UnityEngine.KeyCode 数值一致），可传 `hold_ms` 控制按住时长。
+`GET /ping` 的 `key_injection` 字段会如实报告拦截是否装上了。
+
+## 在指定位置放置零件（不需要拖动）
+
+建造界面里零件必须从左侧菜单**拖**到火箭上，纯点击放不上去。
+`POST /build_place {"name": "...", "x": 0, "y": 0}` 直接构造游戏自己的数据结构：
+
+```
+SFS.Parts.PartSave { name, position, orientation }
+  -> SFS.Builds.Blueprint(parts, stages, center, rotation, interiorView)
+    -> SFS.Builds.BuildState.main.SpawnBlueprint(blueprint, applyUndo, logger)
+```
+
+零件名必须是合法的（先 `GET /build_catalog` 查询）：
+
+```jsonc
+// GET /build_catalog
+{"ok":true,"ready":true,"count":14,"source":"scene_parts",
+ "parts":["Fuel Tank","Fairing","Valiant Engine", ...]}
+```
+
+`source` 会说明零件名是从哪里拿到的，便于排障。
+`POST /build_place` 会先校验零件名确实在目录里，**不确定的名字一律拒绝**，
+绝不把未经验证的数据交给游戏内部。
 
 其他已知事实（游戏 v1.6.00.16）：
 
@@ -119,10 +179,34 @@ pwsh -File build.ps1
 - `SFS.UI.Button` 的字段：`clickEvent`(`SFS.UI.ClickUnityEvent` : `UnityEvent<OnInputEndData>`)、
   `onClick` / `onUp` / `onRightClick`(`OptionalDelegate<OnInputEndData>`)、`buttonEnabled`(`bool`)
 - `OnInputEndData(InputType, TouchPosition, bool click)`；`InputType`: `Touch=0, MouseLeft=1, MouseRight=2`
+- 座位在非激活对象上时 `FindObjectsOfType` 找不到它（例如零件菜单 `PickGridUI`），
+  此时经由持有者字段（`BuildManager.main.pickGrid`）取实例
+- `PartsLoader.parts` / `partVariants` 在 v1.6.00.16 里**是 null**；
+  零件名要走 `PartsLoader.LoadParts()` 的**返回值**（该方法不写静态字段）
+
+## SFS 默认操作方法
+
+给上层 AI 或用户对照用（`POST /key` 传对应的虚拟键码）：
+
+| 操作 | 按键 | 键码 |
+| --- | --- | --- |
+| 向左 / 向右转向 | Q / E | 81 / 69 |
+| 平移与俯仰（需先开 RCS） | W / A / S / D | 87 / 65 / 83 / 68 |
+| 油门加大 / 减小 | Shift / Ctrl | 16 / 17 |
+| RCS 开关 | R | 82 |
+| 点火 / 执行下一级 | 空格 | 32 |
+| 分级控制程序 | 回车 | 13 |
+| 返回 | Esc | 27 |
+
+> 油门与分级也可以完全不走按键：`POST /command` 的
+> `set_throttle` / `throttle_on` / `throttle_off` / `stage` / `rcs_toggle`
+> 是直接改游戏状态的，最可靠。
 
 ## 说明
 
 - 模组只做只读遥测采集与少量指令，**不会修改存档文件**。
+- `build_place` 会真实往当前建造场景里生成零件；如果不想被改动，
+  请在测试用的存档里操作。
 - Spaceflight Simulator 为 Team Curiosity 开发的商业游戏，本项目与官方无关，
   分发的是自制的第三方模组；仓库中**不包含**任何游戏本体文件。
 

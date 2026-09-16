@@ -186,7 +186,14 @@ namespace SfsAgent
             return "";
         }
 
-        /// <summary>取 UI 元素的屏幕像素坐标。</summary>
+        /// <summary>
+        /// 取 UI 元素的屏幕像素坐标。
+        ///
+        /// 优先用 RectTransform.GetWorldCorners 求矩形中心：
+        /// Screen Space Overlay 画布下世界坐标就是屏幕像素，而且矩形中心比
+        /// transform.position（枢轴点，常在角上）更能代表按钮实际可点区域，
+        /// 命中率明显更高。
+        /// </summary>
         private static bool TryGetPixel(object button, out double px, out double py)
         {
             px = 0;
@@ -198,6 +205,45 @@ namespace SfsAgent
                 {
                     return false;
                 }
+
+                Type v3 = BridgeState.FindType("UnityEngine.Vector3");
+                if (v3 != null)
+                {
+                    MethodInfo gwc = tr.GetType().GetMethod(
+                        "GetWorldCorners",
+                        BindingFlags.Public | BindingFlags.Instance);
+                    if (gwc != null)
+                    {
+                        try
+                        {
+                            Array corners = Array.CreateInstance(v3, 4);
+                            gwc.Invoke(tr, new object[] { corners });
+                            object c0 = corners.GetValue(0);
+                            object c2 = corners.GetValue(2);
+                            double x0 = Convert.ToDouble(
+                                BridgeState.Get(c0, "x"), CultureInfo.InvariantCulture);
+                            double y0 = Convert.ToDouble(
+                                BridgeState.Get(c0, "y"), CultureInfo.InvariantCulture);
+                            double x2 = Convert.ToDouble(
+                                BridgeState.Get(c2, "x"), CultureInfo.InvariantCulture);
+                            double y2 = Convert.ToDouble(
+                                BridgeState.Get(c2, "y"), CultureInfo.InvariantCulture);
+                            double cx = (x0 + x2) / 2.0;
+                            double cy = (y0 + y2) / 2.0;
+                            if (cx != 0 || cy != 0)
+                            {
+                                px = cx;
+                                py = cy;
+                                return true;
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+
+                // 退回 transform.position + WorldToScreenPoint
                 object worldPos = BridgeState.Get(tr, "position");
                 if (worldPos == null)
                 {

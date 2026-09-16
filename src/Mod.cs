@@ -87,6 +87,18 @@ namespace SfsAgent
             {
                 Log("patch failed: " + ex.Message);
             }
+
+            try
+            {
+                BridgeKeys.Install();
+                Log("key injection: " + (BridgeKeys.Installed
+                    ? "ON (" + BridgeKeys.InstallInfo + ")"
+                    : "OFF - " + BridgeKeys.InstallInfo));
+            }
+            catch (Exception ex)
+            {
+                Log("key injection install failed: " + ex.Message);
+            }
         }
 
         /// <summary>通过反射调用 UnityEngine.Debug.Log，避免编译期 Unity 依赖。</summary>
@@ -206,6 +218,10 @@ namespace SfsAgent
                 BridgeScreenshot.Tick();
                 BridgeInput.Tick();
                 BridgeUi.Tick();
+                // 游戏内输入注入：按下的键与点击都由这里按帧推进
+                BridgeKeys.Tick();
+                BridgePointer.Tick();
+                BridgeParts.Tick();
             }
             catch
             {
