@@ -1,0 +1,25 @@
+# ── 游戏程序集与 Harmony（第三方，禁止分发）──
+# refs/ 里是从本机游戏安装目录复制出来的 Assembly-CSharp.dll / 0Harmony.dll，
+# 属于游戏本体与第三方库，绝对不能提交。
+refs/
+
+# ── 构建产物 ──
+dist/
+obj/
+bin/
+*.dll
+*.pdb
+*.mdb
+
+# ── 编辑器 / 系统 ──
+.vs/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+
+# ── 临时诊断脚本 ──
+.probe*.ps1
+.diag.ps1
+.diag-log.txt
