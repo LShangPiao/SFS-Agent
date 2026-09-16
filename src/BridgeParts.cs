@@ -447,7 +447,7 @@ namespace SfsAgent
             {
                 object n = BridgeState.Get(parts[i], "Name");
                 string s = n == null ? "" : Convert.ToString(n, CultureInfo.InvariantCulture);
-                if (!string.IsNullOrEmpty(s))
+                if (IsPlausiblePartName(s))
                 {
                     catalog.Add(s.Trim());
                 }
@@ -464,6 +464,27 @@ namespace SfsAgent
 
         private static string sources = "";
 
+        /// <summary>
+        /// 过滤掉明显不是零件名的键。
+        /// 从 PickGridUI 的字典里捞的时候会混进分级按钮之类的键（例如 "1"），
+        /// 这类名字如果留在目录里，就可能被上层传回游戏当零件名用。
+        /// </summary>
+        private static bool IsPlausiblePartName(string s)
+        {
+            if (string.IsNullOrEmpty(s) || s.Length > 60)
+            {
+                return false;
+            }
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (char.IsLetter(s[i]))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private static void AddDictionary(object dict, string label)
         {
             if (dict == null)
@@ -479,7 +500,7 @@ namespace SfsAgent
             foreach (DictionaryEntry e in d)
             {
                 string s = KeyToString(e.Key);
-                if (s.Length > 0)
+                if (IsPlausiblePartName(s))
                 {
                     catalog.Add(s);
                 }
