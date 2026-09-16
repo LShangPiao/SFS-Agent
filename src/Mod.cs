@@ -276,6 +276,7 @@ namespace SfsAgent
                 BridgeKeys.Tick();
                 BridgePointer.Tick();
                 BridgeParts.Tick();
+                BridgeBlueprint.Tick();
             }
             catch
             {

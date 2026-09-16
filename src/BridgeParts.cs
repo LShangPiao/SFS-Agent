@@ -29,6 +29,7 @@ namespace SfsAgent
             public string Name;
             public double X;
             public double Y;
+            public string Stack;   // top / bottom / same / none
         }
 
         private static readonly Queue<Job> Pending = new Queue<Job>();
@@ -72,6 +73,77 @@ namespace SfsAgent
         }
 
         public static int PlacedCount;
+
+        // 官方示例火箭：BuildManager.exampleRockets[].json 就是保证能飞的蓝图 JSON。
+        // 读它必须走主线程（会碰 Unity 对象），所以同样是「请求 + 缓存」模式。
+        private static volatile bool examplesRequested;
+        private static volatile bool examplesReady;
+        private static string examplesJson = "{}";
+
+        public static void RequestExamples()
+        {
+            examplesReady = false;
+            examplesRequested = true;
+        }
+
+        public static bool ExamplesReady
+        {
+            get { return examplesReady; }
+        }
+
+        public static string ExamplesJson()
+        {
+            return examplesJson;
+        }
+
+        private static string BuildExamplesJson()
+        {
+            StringBuilder sb = new StringBuilder(4096);
+            sb.Append("{\"ok\":true");
+            try
+            {
+                Type mgrType = BridgeState.FindType("SFS.Builds.BuildManager");
+                object mgr = BridgeState.GetStatic(mgrType, "main");
+                if (mgr == null)
+                {
+                    sb.Append(",\"error\":\"BuildManager.main is null\"}");
+                    return sb.ToString();
+                }
+                object examples = BridgeState.Get(mgr, "exampleRockets");
+                Array arr = examples as Array;
+                sb.Append(",\"count\":").Append(arr == null ? 0 : arr.Length);
+                sb.Append(",\"examples\":[");
+                if (arr != null)
+                {
+                    for (int i = 0; i < arr.Length; i++)
+                    {
+                        if (i > 0)
+                        {
+                            sb.Append(",");
+                        }
+                        object ex = arr.GetValue(i);
+                        object name = BridgeState.Get(ex, "rocketName");
+                        object json = BridgeState.Get(ex, "json");
+                        string nameStr = name == null
+                            ? ""
+                            : Convert.ToString(name, CultureInfo.InvariantCulture);
+                        string jsonStr = json == null
+                            ? ""
+                            : Convert.ToString(json, CultureInfo.InvariantCulture);
+                        sb.Append("{\"name\":\"").Append(Esc(nameStr))
+                          .Append("\",\"json_len\":").Append(jsonStr == null ? 0 : jsonStr.Length)
+                          .Append(",\"json\":\"").Append(Esc(jsonStr)).Append("\"}");
+                    }
+                }
+                sb.Append("]");
+            }
+            catch (Exception ex)
+            {
+                sb.Append(",\"error\":\"").Append(Esc(ex.Message)).Append("\"");
+            }
+            sb.Append("}");
+            return sb.ToString();
+        }
 
         // 综合诊断：一次性把几个可能的零件名来源都 dump 出来，
         // 避免为了定位一个字段反复重启游戏。
@@ -203,10 +275,16 @@ namespace SfsAgent
         /// <summary>HTTP 线程调用：排队一次放置。</summary>
         public static void EnqueuePlace(string name, double x, double y)
         {
+            EnqueuePlace(name, x, y, null);
+        }
+
+        public static void EnqueuePlace(string name, double x, double y, string stack)
+        {
             Job job = new Job();
             job.Name = name;
             job.X = x;
             job.Y = y;
+            job.Stack = stack;
             lock (Gate)
             {
                 Pending.Enqueue(job);
@@ -234,6 +312,20 @@ namespace SfsAgent
 
         public static void Tick()
         {
+            if (examplesRequested)
+            {
+                examplesRequested = false;
+                try
+                {
+                    examplesJson = BuildExamplesJson();
+                }
+                catch (Exception ex)
+                {
+                    examplesJson = "{\"ok\":false,\"error\":\"" + Esc(ex.Message) + "\"}";
+                }
+                examplesReady = true;
+            }
+
             if (diagRequested)
             {
                 diagRequested = false;
@@ -294,6 +386,7 @@ namespace SfsAgent
                 }
 
                 steps = "";
+                ResolveStack(job);
                 PlacedCount = PlacePart(job);
                 LastResult = "placed " + job.Name + " at (" + Num(job.X) + ", " + Num(job.Y)
                     + "), count=" + PlacedCount;
@@ -613,6 +706,13 @@ namespace SfsAgent
             return ctor.Invoke(new object[] { (float)x, (float)y });
         }
 
+        /// <summary>
+        /// 零件的标准朝向。
+        ///
+        /// **不是 (0,0,0)** —— 实测官方示例蓝图里所有零件的 o 都是 (1, 1, 0)：
+        /// x/y 是表面贴合偏移，z 是绕轴角度。用 (0,0,0) 会让零件朝向非法，
+        /// 接不上别的零件，物理直接失效（表现就是发射时散架、钻到地下）。
+        /// </summary>
         private static object MakeOrientation()
         {
             Type t = BridgeState.FindType("SFS.Parts.Modules.Orientation");
@@ -626,7 +726,135 @@ namespace SfsAgent
             {
                 return null;
             }
-            return ctor.Invoke(new object[] { 0f, 0f, 0f });
+            return ctor.Invoke(new object[] { 1f, 1f, 0f });
+        }
+
+        /// <summary>
+        /// 从「同名零件的真实实例或预制体」反推一份完整的 PartSave，抄走 N/T 变量。
+        ///
+        /// 这是零件能被正确生成的关键：蓝图里每个零件都带尺寸（N）与纹理（T），
+        /// 只给名字 + 坐标的话零件是没有尺寸的，物理与几何都会失效。
+        /// 找不到模板就如实标记，让上层知道这次放置可能不完整。
+        /// </summary>
+        private static void ApplyTemplate(Type partSaveType, object save, string name)
+        {
+            try
+            {
+                object template = FindTemplate(name);
+                if (template == null)
+                {
+                    steps += "template=missing;";
+                    return;
+                }
+
+                MethodInfo createSaves = partSaveType.GetMethod(
+                    "CreateSaves",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (createSaves == null)
+                {
+                    steps += "template=noCreateSaves;";
+                    return;
+                }
+
+                Array one = Array.CreateInstance(template.GetType(), 1);
+                one.SetValue(template, 0);
+                Array saves = createSaves.Invoke(null, new object[] { one }) as Array;
+                if (saves == null || saves.Length == 0)
+                {
+                    steps += "template=empty;";
+                    return;
+                }
+
+                object src = saves.GetValue(0);
+                SetMember(save, "NUMBER_VARIABLES", BridgeState.Get(src, "NUMBER_VARIABLES"));
+                SetMember(save, "TOGGLE_VARIABLES", BridgeState.Get(src, "TOGGLE_VARIABLES"));
+                SetMember(save, "TEXT_VARIABLES", BridgeState.Get(src, "TEXT_VARIABLES"));
+                steps += "template=ok;";
+            }
+            catch (Exception ex)
+            {
+                steps += "template=" + ex.GetType().Name + ";";
+            }
+        }
+
+        /// <summary>
+        /// 找零件模板。**必须用内部名匹配** —— `Part.Name` 返回的是显示名
+        /// （"Valiant Engine"），而 PartSave 里用的是内部名（"Engine Valiant"），
+        /// 两者不一样。所以主路径是 PartsLoader 的字典（键就是内部名）。
+        /// </summary>
+        private static object FindTemplate(string name)
+        {
+            try
+            {
+                // 主路径：PartsLoader.LoadParts() 的返回值，键是内部名
+                Type loaderType = BridgeState.FindType("SFS.Parts.PartsLoader");
+                if (loaderType != null)
+                {
+                    object dict = LoadedParts(loaderType);
+                    IDictionary d = dict as IDictionary;
+                    if (d != null)
+                    {
+                        foreach (DictionaryEntry e in d)
+                        {
+                            if (string.Equals(KeyToString(e.Key), name,
+                                    StringComparison.OrdinalIgnoreCase))
+                            {
+                                return e.Value;
+                            }
+                        }
+                    }
+                }
+
+                // 兜底：场景里已有的零件，按显示名比对
+                Type partType = BridgeState.FindType("SFS.Parts.Part");
+                if (partType != null)
+                {
+                    object[] parts = BridgeState.FindObjects(partType);
+                    for (int i = 0; i < parts.Length; i++)
+                    {
+                        object n = BridgeState.Get(parts[i], "Name");
+                        string s = n == null ? "" : Convert.ToString(n, CultureInfo.InvariantCulture);
+                        if (string.Equals(s, name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            return parts[i];
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return null;
+        }
+
+        private static object cachedParts;
+        private static bool cachedPartsTried;
+
+        /// <summary>在主线程调用 PartsLoader.LoadParts() 并缓存返回值。</summary>
+        private static object LoadedParts(Type loaderType)
+        {
+            if (!cachedPartsTried)
+            {
+                cachedPartsTried = true;
+                try
+                {
+                    MethodInfo load = loaderType.GetMethod(
+                        "LoadParts",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                        null,
+                        Type.EmptyTypes,
+                        null);
+                    if (load != null)
+                    {
+                        cachedParts = load.Invoke(null, null);
+                    }
+                }
+                catch
+                {
+                    cachedParts = null;
+                }
+            }
+            return cachedParts;
         }
 
         private static void SetMember(object obj, string name, object value)
@@ -649,6 +877,151 @@ namespace SfsAgent
             {
                 p.SetValue(obj, value, null);
             }
+        }
+
+        /// <summary>
+        /// 按「叠在已有零件的上面/下面/同一贴合点」自动算位置。
+        ///
+        /// 为什么需要：每个零件的高度不同（Fuel Tank 的 N.height 是 4.0，锥头、
+        /// 引擎都不一样）。**统一用固定间距会让零件之间留缝或重叠** ——
+        /// 实测后果是发射时上面的零件掉下来把火箭砸爆。
+        /// 正确位置 = 两者的贴合面重合，即 y = anchorY ± (anchorH + newH) / 2。
+        /// </summary>
+        private static void ResolveStack(Job job)
+        {
+            string mode = job.Stack == null ? "" : job.Stack.Trim().ToLowerInvariant();
+            if (mode.Length == 0 || mode == "none")
+            {
+                return;
+            }
+
+            Type partType = BridgeState.FindType("SFS.Parts.Part");
+            if (partType == null)
+            {
+                return;
+            }
+            object[] parts = BridgeState.FindObjects(partType);
+            if (parts.Length == 0)
+            {
+                steps += "stack=noAnchor;";
+                return;   // 场景里没零件，就用调用方给的坐标
+            }
+
+            object anchor = null;
+            double anchorY = 0;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                object pos = BridgeState.Get(parts[i], "Position");
+                if (pos == null)
+                {
+                    continue;
+                }
+                double y = BridgeState.ToDouble(BridgeState.Get(pos, "y"), 0);
+                if (anchor == null
+                    || (mode == "top" && y > anchorY)
+                    || (mode == "bottom" && y < anchorY))
+                {
+                    anchor = parts[i];
+                    anchorY = y;
+                }
+            }
+            if (anchor == null)
+            {
+                steps += "stack=noAnchorPos;";
+                return;
+            }
+
+            object anchorPos = BridgeState.Get(anchor, "Position");
+            double ax = BridgeState.ToDouble(BridgeState.Get(anchorPos, "x"), 0);
+
+            double anchorH = PartHeight(anchor);
+            double newH = TemplateHeight(job.Name);
+            if (anchorH <= 0 || newH <= 0)
+            {
+                // 读不到高度就退化为「同一贴合点」（引擎贴罐底那种）
+                job.X = ax;
+                job.Y = anchorY;
+                steps += "stack=same(h=" + Num(anchorH) + "/" + Num(newH) + ");";
+                return;
+            }
+
+            job.X = ax;
+            if (mode == "bottom")
+            {
+                job.Y = anchorY - (anchorH + newH) / 2.0;
+            }
+            else
+            {
+                job.Y = anchorY + (anchorH + newH) / 2.0;
+            }
+            steps += "stack=" + mode + "(aH=" + Num(anchorH) + ",nH=" + Num(newH) + ");";
+        }
+
+        /// <summary>从零件的 PartSave 里读 N.height。</summary>
+        private static double PartHeight(object part)
+        {
+            try
+            {
+                Type saveType = BridgeState.FindType("SFS.Parts.PartSave");
+                if (saveType == null || part == null)
+                {
+                    return -1;
+                }
+                MethodInfo createSaves = saveType.GetMethod(
+                    "CreateSaves",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                if (createSaves == null)
+                {
+                    return -1;
+                }
+                Array one = Array.CreateInstance(part.GetType(), 1);
+                one.SetValue(part, 0);
+                Array saves = createSaves.Invoke(null, new object[] { one }) as Array;
+                if (saves == null || saves.Length == 0)
+                {
+                    return -1;
+                }
+                return HeightOf(saves.GetValue(0));
+            }
+            catch
+            {
+                return -1;
+            }
+        }
+
+        private static double TemplateHeight(string name)
+        {
+            object t = FindTemplate(name);
+            if (t == null)
+            {
+                return -1;
+            }
+            return PartHeight(t);
+        }
+
+        private static double HeightOf(object partSave)
+        {
+            try
+            {
+                object n = BridgeState.Get(partSave, "NUMBER_VARIABLES");
+                IDictionary d = n as IDictionary;
+                if (d == null)
+                {
+                    return -1;
+                }
+                foreach (DictionaryEntry e in d)
+                {
+                    if (string.Equals(KeyToString(e.Key), "height",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return BridgeState.ToDouble(e.Value, -1);
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return -1;
         }
 
         private static int PlacePart(Job job)
@@ -705,14 +1078,42 @@ namespace SfsAgent
             SetMember(save, "position", MakeVector2(job.X, job.Y));
             SetMember(save, "orientation", MakeOrientation());
 
+            // 关键：把零件的 N/T 变量抄过来。
+            // 蓝图里每个零件都带 N（width_original / width_a / width_b / height …）
+            // 和 T（纹理）。**没有这些，零件就没有尺寸** —— 实测结果是发射时
+            // 结构散架并直接钻到地下。这里用游戏自己的 PartSave.CreateSaves()
+            // 从一个真实零件反推出完整的 PartSave，再抄字段。
+            ApplyTemplate(partSaveType, save, job.Name);
+
             // 2) Blueprint
             Array saves = Array.CreateInstance(partSaveType, 1);
             saves.SetValue(save, 0);
 
+            // 分级归属：蓝图里的 stages 记录 partIndexes，零件不属于任何分级的话
+            // **引擎永远不会点火**（实测：推力恒为 0t）。这里把这一个零件登记进
+            // 第 1 级，让它至少是可点火的。
             Type stageSaveType = BridgeState.FindType("SFS.World.StageSave");
-            Array stages = stageSaveType == null
-                ? Array.CreateInstance(typeof(object), 0)
-                : Array.CreateInstance(stageSaveType, 0);
+            Array stages;
+            if (stageSaveType == null)
+            {
+                stages = Array.CreateInstance(typeof(object), 0);
+            }
+            else
+            {
+                stages = Array.CreateInstance(stageSaveType, 1);
+                try
+                {
+                    object stageSave = Activator.CreateInstance(stageSaveType);
+                    SetMember(stageSave, "stageId", 1);
+                    SetMember(stageSave, "partIndexes", new int[] { 0 });
+                    stages.SetValue(stageSave, 0);
+                    steps += "stage=1;";
+                }
+                catch (Exception ex)
+                {
+                    steps += "stage=" + ex.GetType().Name + ";";
+                }
+            }
 
             object blueprint = null;
             ConstructorInfo[] bctors = blueprintType.GetConstructors();

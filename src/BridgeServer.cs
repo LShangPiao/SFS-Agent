@@ -244,6 +244,23 @@ namespace SfsAgent
                 }
                 payload = BridgePointer.HitTestVerbose(nx * sw, (1.0 - ny) * sh);
             }
+            else if (path == "/blueprints")
+            {
+                payload = HandleBlueprints();
+            }
+            else if (path == "/blueprint_load" && method == "POST")
+            {
+                payload = HandleBlueprintLoad(body);
+            }
+            else if (path == "/debug_examples")
+            {
+                BridgeParts.RequestExamples();
+                for (int i = 0; i < 60 && !BridgeParts.ExamplesReady; i++)
+                {
+                    System.Threading.Thread.Sleep(100);
+                }
+                payload = BridgeParts.ExamplesJson();
+            }
             else if (path == "/debug_parts")
             {
                 payload = HandleDebugParts();
@@ -405,6 +422,33 @@ namespace SfsAgent
             return BridgeParts.CatalogJson();
         }
 
+        /// <summary>列出游戏存档里的蓝图（走 Blueprint_Saving.GetBlueprintsList）。</summary>
+        private static string HandleBlueprints()
+        {
+            BridgeBlueprint.RequestList();
+            for (int i = 0; i < 40 && !BridgeBlueprint.ListReady; i++)
+            {
+                System.Threading.Thread.Sleep(100);
+            }
+            return BridgeBlueprint.ListJson();
+        }
+
+        /// <summary>按名字加载一个蓝图到建造场景（由游戏自己解析与生成）。</summary>
+        private static string HandleBlueprintLoad(string body)
+        {
+            string name = ExtractString(body, "name");
+            if (string.IsNullOrEmpty(name))
+            {
+                return "{\"ok\":false,\"error\":\"missing name\"}";
+            }
+            BridgeBlueprint.RequestLoad(name);
+            for (int i = 0; i < 120 && !BridgeBlueprint.LoadReady; i++)
+            {
+                System.Threading.Thread.Sleep(100);
+            }
+            return BridgeBlueprint.LoadJson();
+        }
+
         /// <summary>诊断：把几个可能的零件名来源一次性 dump 出来（主线程执行）。</summary>
         private static string HandleDebugParts()
         {
@@ -426,10 +470,11 @@ namespace SfsAgent
             }
             double x = ExtractNumber(body, "x");
             double y = ExtractNumber(body, "y");
+            string stack = ExtractString(body, "stack");
 
             BridgeParts.Reset();
-            BridgeParts.EnqueuePlace(name, x, y);
-            System.Threading.Thread.Sleep(250);
+            BridgeParts.EnqueuePlace(name, x, y, stack);
+            System.Threading.Thread.Sleep(300);
             return BridgeParts.ResultJson();
         }
 
