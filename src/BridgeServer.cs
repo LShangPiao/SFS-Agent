@@ -222,6 +222,8 @@ namespace SfsAgent
             else if (path == "/config" && method == "POST")
             {
                 payload = BridgePage.MergeWriteJson(BridgeConfig.IniPath, body);
+                // 语言等改动立即同步到内存（游戏内提示会跟着变）
+                BridgeConfig.SyncLang();
             }
             else if (path == "/config")
             {

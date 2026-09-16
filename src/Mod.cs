@@ -186,6 +186,9 @@ namespace SfsAgent
         public static bool OpenBrowser = true;
         public static string IniPath = "";
 
+        /// <summary>界面语言：zh / en。配置页与游戏内提示共用。</summary>
+        public static string Lang = "zh";
+
         /// <summary>读取 Mods/SFS-Agent/sfs-agent.ini；读不到就用默认值。</summary>
         public static void Load()
         {
@@ -198,10 +201,25 @@ namespace SfsAgent
                 }
                 IniPath = Path.Combine(dir, "sfs-agent.ini");
                 BridgePage.LoadConfig(IniPath, out Port, out OpenBrowser);
+                SyncLang();
             }
             catch (Exception ex)
             {
                 Main.Log("config load failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>把 ini 里的 lang 同步到内存（配置页改完也会调）。</summary>
+        public static void SyncLang()
+        {
+            try
+            {
+                string v = BridgePage.ReadValue(IniPath, "lang", "zh").Trim().ToLowerInvariant();
+                Lang = v == "en" ? "en" : "zh";
+                BridgeOverlay.Lang = Lang;
+            }
+            catch
+            {
             }
         }
     }

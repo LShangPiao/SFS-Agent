@@ -20,14 +20,35 @@ namespace SfsAgent
         public static volatile bool WantVisible;
         public static volatile bool Exclusive;
 
-        // 解除按钮的屏幕区域（像素，左上角原点），由 Build() 计算
+        /// <summary>界面语言：zh / en。跟随配置里的 lang。</summary>
+        public static volatile string Lang = "zh";
+
+        private static string _lastLang;
+
+        private static string TextWorking()
+        {
+            return Lang == "en" ? "Agent controlling" : "Agent \u64cd\u4f5c\u4e2d";
+        }
+
+        private static string TextUnlock()
+        {
+            return Lang == "en" ? "Release control" : "\u89e3\u9664\u72ec\u5360";
+        }
+
+        // 解除按钮的屏幕区域（像素，左上角原点）
+        private const double BtnW = 148;
+        private const double BtnH = 30;
+        private const double BtnTop = 62;
+        private const double HitInset = 3;   // 判定往内缩一点，边缘不误触
+
         private static double unlockX;
         private static double unlockY;
-        private static double unlockW;
-        private static double unlockH;
+        private static double unlockW = BtnW;
+        private static double unlockH = BtnH;
 
         private static object root;          // Canvas 所在的 GameObject
-        private static object unlockLabel;   // 用于改文字
+        private static object unlockLabel;   // 「解除独占」的文字组件
+        private static object workLabel;     // 「Agent 操作中」的文字组件
         private static bool built;
         private static bool buildFailed;
         private static string buildError = "";
@@ -48,8 +69,11 @@ namespace SfsAgent
             {
                 return false;
             }
-            return screenX >= unlockX && screenX <= unlockX + unlockW
-                && screenY >= unlockY && screenY <= unlockY + unlockH;
+            // 判定区域与按钮视觉严格对齐，并往内缩 HitInset，避免边缘误触
+            return screenX >= unlockX + HitInset
+                && screenX <= unlockX + unlockW - HitInset
+                && screenY >= unlockY + HitInset
+                && screenY <= unlockY + unlockH - HitInset;
         }
 
         // -- 生命周期 ---------------------------------------------------------
@@ -72,6 +96,14 @@ namespace SfsAgent
             if (built)
             {
                 SetActive(true);
+
+                // 语言切换时刷新文字
+                if (_lastLang != Lang)
+                {
+                    _lastLang = Lang;
+                    SetMember(workLabel, "text", TextWorking());
+                    SetMember(unlockLabel, "text", TextUnlock());
+                }
             }
         }
 
@@ -209,11 +241,15 @@ namespace SfsAgent
                     null, new Type[] { typeof(string), typeof(int) }, null);
                 if (create != null)
                 {
-                    // 中文优先用系统里的中文字体
-                    string[] names = new string[] { "Microsoft YaHei", "SimHei", "Arial" };
+                    // 偏扁、偏方的无衬线字体优先（用户觉得原来那个不合适）
+                    string[] names = new string[]
+                    {
+                        "Microsoft YaHei UI", "Microsoft YaHei", "SimHei",
+                        "Segoe UI Semibold", "Segoe UI", "Arial",
+                    };
                     for (int i = 0; i < names.Length; i++)
                     {
-                        object f = create.Invoke(null, new object[] { names[i], 22 });
+                        object f = create.Invoke(null, new object[] { names[i], 24 });
                         if (f != null)
                         {
                             return f;
@@ -225,6 +261,46 @@ namespace SfsAgent
             {
             }
             return null;
+        }
+
+        /// <summary>Unity 内置的九宫格圆角 sprite，用来让按钮有圆角。</summary>
+        private static object GetRoundedSprite()
+        {
+            try
+            {
+                Type res = T("UnityEngine.Resources");
+                Type objType = T("UnityEngine.Object");
+                MethodInfo m = res.GetMethod(
+                    "GetBuiltinResource", BindingFlags.Public | BindingFlags.Static,
+                    null, new Type[] { typeof(Type), typeof(string) }, null);
+                if (m == null)
+                {
+                    return null;
+                }
+                return m.Invoke(null, new object[] { T("UnityEngine.Sprite"), "UI/Skin/UISprite.psd" });
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>把文字节点压扁一点，视觉上更宽更扁。</summary>
+        private static void Squash(object rt, double sx, double sy)
+        {
+            SetMember(rt, "localScale", MakeVector3(sx, sy, 1.0));
+        }
+
+        private static object MakeVector3(double x, double y, double z)
+        {
+            Type t = T("UnityEngine.Vector3");
+            if (t == null)
+            {
+                return null;
+            }
+            ConstructorInfo c = t.GetConstructor(
+                new Type[] { typeof(float), typeof(float), typeof(float) });
+            return c == null ? null : c.Invoke(new object[] { (float)x, (float)y, (float)z });
         }
 
         private static void Build()
@@ -284,11 +360,11 @@ namespace SfsAgent
                     SetMember(img, "color", MakeColor(0.33, 0.60, 1.0, alpha));
                 }
 
-                // ---- 文字：Agent 操作中 ----
+                // ---- 文字：Agent 操作中 / Agent controlling ----
                 object textRt = NewUiElement("label", canvas, textType);
                 SetRect(textRt, 0, 1, 1, 1, 28, 34);
                 object text = GetComponent(textRt, textType);
-                SetMember(text, "text", "Agent 操作中");
+                SetMember(text, "text", TextWorking());
                 if (font != null)
                 {
                     SetMember(text, "font", font);
@@ -298,29 +374,40 @@ namespace SfsAgent
                     T("UnityEngine.TextAnchor"), 1)); // UpperCenter
                 SetMember(text, "color", blue);
                 SetMember(text, "raycastTarget", false);
+                Squash(textRt, 1.08, 0.90);   // 压扁一点
+                workLabel = text;
 
-                // ---- 解除按钮 ----
+                // ---- 解除按钮（用九宫格圆角 sprite，pill 感）----
                 object btnRt = NewUiElement("unlock", canvas, imageType);
-                unlockW = 132;
-                unlockH = 32;
+                unlockW = BtnW;
+                unlockH = BtnH;
                 SetMember(btnRt, "anchorMin", MakeVector2(0.5, 1));
                 SetMember(btnRt, "anchorMax", MakeVector2(0.5, 1));
                 SetMember(btnRt, "pivot", MakeVector2(0.5, 1));
-                SetMember(btnRt, "sizeDelta", MakeVector2(unlockW, unlockH));
-                unlockX = 800 - unlockW / 2;   // 先用假值，Tick 里按实际屏幕更新
-                unlockY = 66;
-                SetMember(btnRt, "anchoredPosition", MakeVector2(0, -66));
+                SetMember(btnRt, "sizeDelta", MakeVector2(BtnW, BtnH));
+                unlockY = BtnTop;
+                SetMember(btnRt, "anchoredPosition", MakeVector2(0, -BtnTop));
                 object btnImg = GetComponent(btnRt, imageType);
                 SetMember(btnImg, "color", MakeColor(0.12, 0.20, 0.36, 0.94));
+                object sprite = GetRoundedSprite();
+                if (sprite != null)
+                {
+                    SetMember(btnImg, "sprite", sprite);
+                    // Image.Type.Sliced = 1
+                    SetMember(btnImg, "type", Enum.ToObject(T("UnityEngine.UI.Image+Type"), 1));
+                    // pixelsPerUnitMultiplier 调小 => sprite 九宫格被放大 => 圆角更明显。
+                    // 不设的话 30px 高的按钮上圆角只有几个像素，肉眼看还是直角。
+                    SetMember(btnImg, "pixelsPerUnitMultiplier", 0.35f);
+                }
 
                 object btnTextRt = NewUiElement("unlockText", canvas, textType);
                 SetMember(btnTextRt, "anchorMin", MakeVector2(0.5, 1));
                 SetMember(btnTextRt, "anchorMax", MakeVector2(0.5, 1));
                 SetMember(btnTextRt, "pivot", MakeVector2(0.5, 1));
-                SetMember(btnTextRt, "sizeDelta", MakeVector2(unlockW, unlockH));
-                SetMember(btnTextRt, "anchoredPosition", MakeVector2(0, -66));
+                SetMember(btnTextRt, "sizeDelta", MakeVector2(BtnW, BtnH));
+                SetMember(btnTextRt, "anchoredPosition", MakeVector2(0, -BtnTop));
                 unlockLabel = GetComponent(btnTextRt, textType);
-                SetMember(unlockLabel, "text", "解除独占");
+                SetMember(unlockLabel, "text", TextUnlock());
                 if (font != null)
                 {
                     SetMember(unlockLabel, "font", font);
@@ -328,9 +415,11 @@ namespace SfsAgent
                 SetMember(unlockLabel, "fontSize", 15);
                 SetMember(unlockLabel, "alignment", Enum.ToObject(
                     T("UnityEngine.TextAnchor"), 4)); // MiddleCenter
-                SetMember(unlockLabel, "color", MakeColor(0.76, 0.86, 1.0, 1.0));
+                SetMember(unlockLabel, "color", MakeColor(1.0, 0.80, 0.90, 1.0));
                 SetMember(unlockLabel, "raycastTarget", false);
+                Squash(btnTextRt, 1.10, 0.90);
 
+                _lastLang = Lang;
                 built = true;
             }
             catch (Exception ex)
