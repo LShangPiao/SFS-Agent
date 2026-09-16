@@ -284,7 +284,33 @@ namespace SfsAgent
 
         // -- 枚举 -------------------------------------------------------------
 
+        public static string filterNote = "";
+
+        /// <summary>
+        /// 枚举当前界面的可点击元素。
+        ///
+        /// 会先用游戏自己的命中判定逐个验证，**只保留真正点得到的元素** ——
+        /// 否则隐藏画布、被遮挡、屏外的按钮也会被列出来，
+        /// 上层点了却毫无反应，就会误判成「游戏没反应」。
+        /// </summary>
         public static void Capture()
+        {
+            filterNote = "";
+            Collect(true);
+
+            // 安全网：判定万一出问题把元素全滤光了，就退回不过滤，
+            // 宁可多列几个，也不要让上层以为界面上什么都没有。
+            if (labels.Count == 0)
+            {
+                Collect(false);
+                if (labels.Count > 0)
+                {
+                    filterNote = "hit-test 把所有元素都滤掉了，已退回未过滤的清单";
+                }
+            }
+        }
+
+        private static void Collect(bool applyHitFilter)
         {
             labels.Clear();
             normX.Clear();
@@ -334,6 +360,17 @@ namespace SfsAgent
                     if (label.Length == 0 && !hasPixel)
                     {
                         continue;
+                    }
+
+                    // 命中判定：这一点上真的点得到这个按钮吗？
+                    if (applyHitFilter && hasPixel)
+                    {
+                        object hit;
+                        if (BridgePointer.HitTest(px, py, out hit)
+                            && !BridgePointer.HitMatches(hit, button))
+                        {
+                            continue;
+                        }
                     }
 
                     labels.Add(label);
@@ -741,6 +778,10 @@ namespace SfsAgent
                 sb.Append("}");
             }
             sb.Append("]");
+            if (filterNote.Length > 0)
+            {
+                sb.Append(",\"note\":\"").Append(Esc(filterNote)).Append("\"");
+            }
             if (lastError.Length > 0)
             {
                 sb.Append(",\"error\":\"").Append(Esc(lastError)).Append("\"");

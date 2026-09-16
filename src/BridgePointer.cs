@@ -104,6 +104,102 @@ namespace SfsAgent
             LastError = "";
         }
 
+        // -- 命中判定（供 BridgeUi 过滤不可见元素）------------------------------
+
+        private static object inputManagerCache;
+
+        /// <summary>安静版：不写 LastError，供枚举时的命中判定使用。</summary>
+        private static object FindInputManagerQuiet()
+        {
+            Type t = BridgeState.FindType("SFS.Input.InputManager");
+            if (t == null)
+            {
+                return null;
+            }
+            object[] found = BridgeState.FindObjects(t);
+            if (found.Length == 0)
+            {
+                return null;
+            }
+            inputManagerCache = found[0];
+            return found[0];
+        }
+
+        /// <summary>
+        /// 用游戏自己的命中判定问「这个像素点上是什么元素」。
+        ///
+        /// 返回 false 表示判定不可用（此时调用方应当**保留**元素，
+        /// 退回到旧行为，而不是误删）。hit 为 null 表示这一点上什么都点不到。
+        /// 必须在主线程调用。
+        /// </summary>
+        public static bool HitTest(double px, double py, out object hit)
+        {
+            hit = null;
+            try
+            {
+                object im = inputManagerCache;
+                if (im == null)
+                {
+                    im = FindInputManagerQuiet();
+                }
+                if (im == null)
+                {
+                    return false;
+                }
+                object touch = MakeTouchPosition(px, py);
+                if (touch == null)
+                {
+                    return false;
+                }
+                MethodInfo check = FindMethod(im.GetType(), "CheckMouseOverState", 1);
+                if (check == null)
+                {
+                    return false;
+                }
+                check.Invoke(im, new object[] { touch });
+                hit = BridgeState.Get(im, "mouseOverElement");
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>命中对象是否就是该元素（或它的子/父对象）。</summary>
+        public static bool HitMatches(object hit, object element)
+        {
+            if (hit == null || element == null)
+            {
+                return false;
+            }
+            if (ReferenceEquals(hit, element))
+            {
+                return true;
+            }
+            try
+            {
+                object target = BridgeState.Get(element, "transform");
+                object tr = BridgeState.Get(hit, "transform");
+                if (target == null || tr == null)
+                {
+                    return false;
+                }
+                for (int i = 0; i < 10 && tr != null; i++)
+                {
+                    if (ReferenceEquals(tr, target))
+                    {
+                        return true;
+                    }
+                    tr = BridgeState.Get(tr, "parent");
+                }
+            }
+            catch
+            {
+            }
+            return false;
+        }
+
         // -- 主线程 -----------------------------------------------------------
 
         public static void Tick()

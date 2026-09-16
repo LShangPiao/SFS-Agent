@@ -20,7 +20,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
+using System.Threading;
 using HarmonyLib;
 using ModLoader;
 
@@ -69,6 +71,8 @@ namespace SfsAgent
 
         public override void Load()
         {
+            BridgeConfig.Load();
+
             try
             {
                 BridgeServer.Start(BridgeConfig.Port);
@@ -77,6 +81,22 @@ namespace SfsAgent
             catch (Exception ex)
             {
                 Log("server start failed: " + ex.Message);
+            }
+
+            if (BridgeConfig.OpenBrowser)
+            {
+                // 延迟几秒再开，等游戏把窗口立起来，也让服务先就绪
+                try
+                {
+                    Thread opener = new Thread(OpenBrowserLater);
+                    opener.IsBackground = true;
+                    opener.Name = "SfsAgentBrowser";
+                    opener.Start();
+                }
+                catch (Exception ex)
+                {
+                    Log("browser thread failed: " + ex.Message);
+                }
             }
 
             try
@@ -98,6 +118,21 @@ namespace SfsAgent
             catch (Exception ex)
             {
                 Log("key injection install failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>延迟几秒后用默认浏览器打开配置页。</summary>
+        private static void OpenBrowserLater()
+        {
+            try
+            {
+                System.Threading.Thread.Sleep(4000);
+                BridgePage.OpenInBrowser(BridgeConfig.Port);
+                Log("config page opened in browser");
+            }
+            catch (Exception ex)
+            {
+                Log("open browser failed: " + ex.Message);
             }
         }
 
@@ -131,6 +166,25 @@ namespace SfsAgent
     public static class BridgeConfig
     {
         public static int Port = 21578;
+        public static bool OpenBrowser = true;
+
+        /// <summary>读取 Mods/SFS-Agent/sfs-agent.ini；读不到就用默认值。</summary>
+        public static void Load()
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(typeof(BridgeConfig).Assembly.Location);
+                if (string.IsNullOrEmpty(dir))
+                {
+                    return;
+                }
+                BridgePage.LoadConfig(Path.Combine(dir, "sfs-agent.ini"), out Port, out OpenBrowser);
+            }
+            catch (Exception ex)
+            {
+                Main.Log("config load failed: " + ex.Message);
+            }
+        }
     }
 
     /// <summary>把帧循环挂到游戏的常驻对象上。</summary>

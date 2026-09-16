@@ -156,7 +156,12 @@ namespace SfsAgent
             string contentType = "application/json; charset=utf-8";
             byte[] outBytes = null;
 
-            if (path == "/screenshot")
+            if (path == "/" || path == "/index.html")
+            {
+                contentType = "text/html; charset=utf-8";
+                payload = BridgePage.Html(BridgeConfig.Port);
+            }
+            else if (path == "/screenshot")
             {
                 byte[] png = BridgeScreenshot.Capture(6000);
                 if (png == null || png.Length == 0)

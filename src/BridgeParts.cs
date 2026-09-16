@@ -742,7 +742,37 @@ namespace SfsAgent
             object[] args = new object[] { blueprint, false, null };
             object result = spawn.Invoke(buildState, args);
             Array arr = result as Array;
-            return arr == null ? 0 : arr.Length;
+            int count = arr == null ? 0 : arr.Length;
+
+            // 把摄像机移到新零件上，否则零件虽然生成了却不在视野里，
+            // 用户/智能体截图看过去还是一片空白网格。
+            if (arr != null && arr.Length > 0)
+            {
+                CenterCamera(buildStateType, buildState, arr);
+            }
+            return count;
+        }
+
+        private static void CenterCamera(Type buildStateType, object buildState, Array parts)
+        {
+            try
+            {
+                MethodInfo center = buildStateType.GetMethod(
+                    "CenterCameraOnParts",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (center != null)
+                {
+                    center.Invoke(buildState, new object[] { parts });
+                }
+            }
+            catch (Exception ex)
+            {
+                if (sources.Length > 0)
+                {
+                    sources += "+";
+                }
+                sources += "centerCamera(failed:" + ex.GetType().Name + ")";
+            }
         }
 
         // -- 结果 -------------------------------------------------------------

@@ -25,6 +25,7 @@ namespace SfsAgent
         public static string lastError = "";
         public static readonly List<string> partNames = new List<string>();
         public static readonly List<int> partNameCounts = new List<int>();
+        public static readonly List<string> partSamples = new List<string>();
 
         private static object[] FindObjectsOfType(Type type)
         {
@@ -146,6 +147,42 @@ namespace SfsAgent
             }
         }
 
+        private static string GetPartPosition(object part)
+        {
+            try
+            {
+                object pos = BridgeState.Get(part, "Position");
+                if (pos == null)
+                {
+                    return "(?)";
+                }
+                double x = ToDouble(BridgeState.Get(pos, "x"), 0);
+                double y = ToDouble(BridgeState.Get(pos, "y"), 0);
+                return "(" + x.ToString("0.#", CultureInfo.InvariantCulture)
+                    + "," + y.ToString("0.#", CultureInfo.InvariantCulture) + ")";
+            }
+            catch
+            {
+                return "(?)";
+            }
+        }
+
+        private static double ToDouble(object o, double fallback)
+        {
+            if (o == null)
+            {
+                return fallback;
+            }
+            try
+            {
+                return Convert.ToDouble(o, CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return fallback;
+            }
+        }
+
         public static void Capture()
         {
             try
@@ -179,6 +216,7 @@ namespace SfsAgent
                 // 分类型统计
                 Dictionary<string, int> counts = new Dictionary<string, int>();
                 double massSum = 0;
+                partSamples.Clear();
                 for (int i = 0; i < parts.Length; i++)
                 {
                     string name = GetPartName(parts[i]);
@@ -194,6 +232,12 @@ namespace SfsAgent
                         }
                     }
                     massSum += GetPartMass(parts[i]);
+
+                    // 记录少量零件的位置：既能排障，也能让上层知道东西放在哪
+                    if (partSamples.Count < 8)
+                    {
+                        partSamples.Add(name + "@" + GetPartPosition(parts[i]));
+                    }
                 }
                 totalMass = massSum;
 
@@ -290,6 +334,18 @@ namespace SfsAgent
             }
 
             sb.Append("]");
+
+            sb.Append(",\"part_samples\":[");
+            for (int i = 0; i < partSamples.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(",");
+                }
+                sb.Append("\"").Append(JsonEscape(partSamples[i])).Append("\"");
+            }
+            sb.Append("]");
+
             if (lastError.Length > 0)
             {
                 sb.Append(",\"error\":\"").Append(JsonEscape(lastError)).Append("\"");
