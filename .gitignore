@@ -23,3 +23,12 @@ Thumbs.db
 .probe*.ps1
 .diag.ps1
 .diag-log.txt
+
+# ── 本地调试脚本（不提交）──
+.cycle*.ps1
+.toflight.ps1
+.fulltest.ps1
+.build*.ps1
+.stack.ps1
+.p[0-9]*.ps1
+
