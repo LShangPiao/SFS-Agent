@@ -102,9 +102,12 @@ namespace SfsAgent
             // 火箭
             sb.Append("<div class='card'><h2 data-i18n='h_rocket'>\u706b\u7bad</h2>");
             sb.Append("<div id='build'>\u2026</div></div>");
-            // 界面
+            // 界面（完整列表，可滚动 + 可搜索）
             sb.Append("<div class='card'><h2 data-i18n='h_ui'>\u754c\u9762</h2>");
-            sb.Append("<div id='ui'>\u2026</div></div>");
+            sb.Append("<input id='uiSearch' spellcheck='false' placeholder='\u641c\u7d22\u6807\u7b7e\u2026' ");
+            sb.Append("style='width:100%;margin-bottom:8px'>");
+            sb.Append("<div id='uiCount' class='sub' style='margin:0 0 8px'></div>");
+            sb.Append("<div id='ui' style='max-height:320px;overflow:auto;font-size:12.5px;line-height:1.7'></div></div>");
 
             // 接口清单
             sb.Append("<div class='card'><h2>HTTP API</h2><table>");
@@ -283,6 +286,7 @@ namespace SfsAgent
             sb.Append("save:'\u4fdd\u5b58',add:'\u65b0\u589e\u4e00\u9879',del:'\u5220',file:'\u6587\u4ef6',");
             sb.Append("saved:'\u5df2\u4fdd\u5b58',changed:'\u9879\u53d8\u66f4',saving:'\u4fdd\u5b58\u4e2d\u2026',failed:'\u5931\u8d25',empty:'\uff08\u7a7a\uff09',");
             sb.Append("h_notes:'\u8bf4\u660e',");
+            sb.Append("ui_none:'\u6ca1\u6709\u5339\u914d\u7684\u5143\u7d20',");
             sb.Append("h_game:'\u6e38\u620f\u8bbe\u7f6e',");
             sb.Append("game_desc:'\u76f4\u63a5\u8bfb\u5199\u6e38\u620f\u81ea\u5df1\u7684\u8bbe\u7f6e\uff08\u97f3\u91cf\u3001\u753b\u9762\u3001\u5e27\u7387\uff09\u3002\u6539\u5b8c\u7acb\u5373\u751f\u6548\uff0c\u4e0d\u7528\u91cd\u542f\u6e38\u620f\u3002',");
             sb.Append("game_unavailable:'\u8bfb\u4e0d\u5230\u6e38\u620f\u8bbe\u7f6e\uff08\u6e38\u620f\u53ef\u80fd\u6ca1\u5728\u8fd0\u884c\uff09',");
@@ -340,6 +344,7 @@ namespace SfsAgent
             sb.Append("save:'Save',add:'Add entry',del:'del',file:'File',");
             sb.Append("saved:'saved',changed:'changed',saving:'saving\u2026',failed:'failed',empty:'(empty)',");
             sb.Append("h_notes:'Notes',");
+            sb.Append("ui_none:'no matching elements',");
             sb.Append("h_game:'Game settings',");
             sb.Append("game_desc:'Read and write the game\u2019s own settings (volume, video, fps). Applied immediately, no restart needed.',");
             sb.Append("game_unavailable:'Game settings unavailable (is the game running?)',");
@@ -378,6 +383,7 @@ namespace SfsAgent
             sb.Append("var LOG_OPS_ONLY=true;");
             sb.Append("var LOG_LAST=0;");
             sb.Append("var CMD_HIST=[], CMD_HI=-1;");
+            sb.Append("var UI_LIST=[];");
             sb.Append("function t(k){return (S[LANG]&&S[LANG][k])||(S.zh[k])||k;}");
             sb.Append("function applyLang(){");
             sb.Append("document.documentElement.lang=(LANG==='zh'?'zh-CN':'en');");
@@ -430,10 +436,9 @@ namespace SfsAgent
             sb.Append("row(t('mass'),(b.total_mass||0).toFixed(2)+' t')+");
             sb.Append("row(t('stages'),b.stage_count)+'</table><div style=\"margin-top:8px\">'+(ks||'\u2014')+'</div>';");
             sb.Append("var u=await (await fetch('/ui')).json();");
-            sb.Append("var us=(u.elements||[]).slice(0,12).map(function(e){");
-            sb.Append("return '#'+e.index+' '+esc(e.label||t('none'))+");
-            sb.Append("(e.x!==undefined?' @ '+e.x.toFixed(2)+','+e.y.toFixed(2):'');}).join('<br>');");
-            sb.Append("q('#ui').innerHTML=t('total')+' '+u.count+' '+t('items')+'<div style=\"margin-top:8px\">'+(us||'\u2014')+'</div>';");
+            sb.Append("UI_LIST=u.elements||[];");
+            sb.Append("q('#uiCount').textContent=t('total')+' '+u.count+' '+t('items');");
+            sb.Append("renderUi();");
             sb.Append("}catch(e){q('#sub').innerHTML='<span class=\"bad\">'+t('noconn')+'</span> \u00b7 '+esc(e);}");
             sb.Append("}");
             sb.Append("tick();setInterval(tick,1500);");
@@ -509,6 +514,24 @@ namespace SfsAgent
             sb.Append("try{var r=await gsSet(k,parseFloat(inp.value));");
             sb.Append("if(!r.ok){alert(r.error||'failed');}else{logTick();}}");
             sb.Append("catch(ex){alert(ex);}});");
+            // ── 界面元素完整列表：显示全部，可搜索 ──
+            sb.Append("function renderUi(){");
+            sb.Append("var kw=(q('#uiSearch').value||'').trim().toLowerCase();");
+            sb.Append("var list=UI_LIST.filter(function(e){");
+            sb.Append("if(!kw)return true;");
+            sb.Append("var s=(e.label||'')+' '+e.index;");
+            sb.Append("return s.toLowerCase().indexOf(kw)>=0;});");
+            sb.Append("if(!list.length){q('#ui').innerHTML=\"<span class='sub'>\"+t('ui_none')+\"</span>\";return;}");
+            sb.Append("var html=list.map(function(e){");
+            sb.Append("var lab=esc(e.label||t('none'));");
+            sb.Append("var pos=(e.x!==undefined&&e.x>=0)?' @ '+e.x.toFixed(3)+', '+e.y.toFixed(3):'';");
+            sb.Append("return \"<div style='display:flex;gap:8px'>\"+");
+            sb.Append("\"<code style='flex:0 0 46px;text-align:right'>#\"+e.index+\"</code>\"+");
+            sb.Append("\"<span style='flex:1'>\"+lab+\"</span>\"+");
+            sb.Append("\"<span style='color:var(--muted);flex:0 0 118px;text-align:right'>\"+pos+\"</span>\"+");
+            sb.Append("\"</div>\";}).join('');");
+            sb.Append("q('#ui').innerHTML=html;}");
+            sb.Append("q('#uiSearch').addEventListener('input',renderUi);");
             // ── 日志：增量拉取，可暂停 ──
             sb.Append("function logLine(e){");
             // 状态标签：成功绿 / 失败红 / 执行中蓝；none 不显示
