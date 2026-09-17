@@ -436,6 +436,7 @@ more people learn about real spaceflight in a fun and reliable way.
 
 - Website: <https://xhth.top/>
 - Bilibili: <https://space.bilibili.com/3546949529635067>
+- Contact: <contact@xhth.top>
 
 Space enthusiasts are welcome to join the conversation, and feedback or bug
 reports are always appreciated.
