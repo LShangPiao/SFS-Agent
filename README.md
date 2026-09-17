@@ -381,7 +381,7 @@ SFS.Parts.PartSave { name, position, orientation, NUMBER_VARIABLES, TEXT_VARIABL
 - B 站主页：<https://space.bilibili.com/3546949529635067>
 - 联系邮箱：<contact@xhth.top>
 
-欢迎航天爱好者加入交流，也欢迎反馈问题与建议。
+欢迎各位同志加入我们，也欢迎反馈问题与建议。
 
 ## 许可证
 
