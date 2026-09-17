@@ -388,6 +388,8 @@ to `POST /key`):
 | **Game log forwarding** (Player.log merged into the same panel) | ✅ |
 | **Read/write game settings** (volume / fps / FXAA / orbit lines etc.) | ✅ |
 | **Hot config apply** (including port switch, no game restart) | ✅ |
+| **Orbital elements** (apsides / eccentricity / period / true anomaly / time to apsis) | ✅ |
+| **Multi-body aware** (radius / GM / atmosphere all read from the game) | ✅ |
 | **Hand-assembling a flyable rocket from scratch** | ⚠️ see Known limitations |
 
 ## Known limitations
