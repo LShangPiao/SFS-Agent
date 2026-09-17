@@ -113,7 +113,7 @@ Verify the install:
 
 ```powershell
 curl http://127.0.0.1:21578/ping
-# {"ok":true,"mod":"sfs_agent","version":"0.3.0","key_injection":"on",...}
+# {"ok":true,"mod":"sfs_agent","version":"0.4.0","key_injection":"on",...}
 ```
 
 ## Build from source
@@ -152,6 +152,10 @@ Listens on `127.0.0.1` only; not exposed to the LAN or the internet.
 | POST | `/exclusive` | Toggle Agent Exclusive Mode (`{"on":true}`; omitted = toggle) |
 | GET | `/ping` | Liveness; returns mod name, version and key-injection state |
 | GET | `/health` | Health check |
+| GET | `/log` | **Runtime log** (`since=<seq>` for incremental fetch, `clear=1` to clear, `limit`) |
+| GET | `/gamelog` | Game-log forwarding status (`on=0` / `on=1` to toggle) |
+| GET | `/settings` | **Read the game's own settings** (volume / video / fps, 10 items) |
+| POST | `/settings` | Change a game setting: `{"key":"fps","value":60}` |
 | GET | `/state` | Flight telemetry |
 | GET | `/build` | Rocket part breakdown |
 | GET | `/build_catalog` | Available part names (by default runs the game's own `LoadParts()` on the main thread for the full list) |
@@ -377,6 +381,11 @@ to `POST /key`):
 | Building: place a single part at a coordinate + camera follows | ✅ part count and mass exactly +1 |
 | Screenshot | ✅ |
 | Built-in config page + auto-open browser on start | ✅ |
+| **Runtime log** (status tags / poll folding / incremental fetch) | ✅ |
+| **State change detection** (screen / scene / world / rocket) | ✅ |
+| **Game log forwarding** (Player.log merged into the same panel) | ✅ |
+| **Read/write game settings** (volume / fps / FXAA / orbit lines etc.) | ✅ |
+| **Hot config apply** (including port switch, no game restart) | ✅ |
 | **Hand-assembling a flyable rocket from scratch** | ⚠️ see Known limitations |
 
 ## Known limitations

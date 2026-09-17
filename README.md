@@ -97,7 +97,7 @@ overlay=true
 
 ```powershell
 curl http://127.0.0.1:21578/ping
-# {"ok":true,"mod":"sfs_agent","version":"0.3.0","key_injection":"on",...}
+# {"ok":true,"mod":"sfs_agent","version":"0.4.0","key_injection":"on",...}
 ```
 
 ## 从源码编译
@@ -131,6 +131,10 @@ pwsh -File build.ps1
 | POST | `/exclusive` | 开关「Agent 独占模式」（`{"on":true}`，缺省则切换） |
 | GET | `/ping` | 存活检测，返回模组名、版本与按键注入状态 |
 | GET | `/health` | 健康检查 |
+| GET | `/log` | **运行日志**（`since=<seq>` 增量拉取，`clear=1` 清空，`limit` 限条数） |
+| GET | `/gamelog` | 游戏日志转发状态（`on=0` / `on=1` 开关） |
+| GET | `/settings` | **读取游戏自身设置**（音量 / 画面 / 帧率等 10 项） |
+| POST | `/settings` | 修改游戏设置：`{"key":"fps","value":60}` |
 | GET | `/state` | 飞行遥测 |
 | GET | `/build` | 火箭零件构成 |
 | GET | `/build_catalog` | 可用零件名（默认在主线程调用游戏自己的 `LoadParts()` 取全量） |
@@ -330,6 +334,11 @@ SFS.Parts.PartSave { name, position, orientation, NUMBER_VARIABLES, TEXT_VARIABL
 | 建造：单个零件定点放置 + 镜头跟随 | ✅ 零件数与质量精确 +1 |
 | 截图 | ✅ |
 | 内置配置页 + 启动时自动开浏览器 | ✅ |
+| **运行日志**（状态标签 / 轮询折叠 / 增量拉取） | ✅ |
+| **状态变化检测**（界面 / 场景 / 世界 / 火箭变化都记录） | ✅ |
+| **游戏日志转发**（Player.log 合并进同一面板） | ✅ |
+| **读写游戏设置**（音量 / 帧率 / FXAA / 轨道线等 10 项） | ✅ 实测写入并持久生效 |
+| **配置热生效**（含端口热切换，不用重启游戏） | ✅ 实测 21578 ↔ 21579 |
 | **从零手拼一枚能飞的完整火箭** | ⚠️ 见下方「已知限制」 |
 
 ## 已知限制
