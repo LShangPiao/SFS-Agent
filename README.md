@@ -97,7 +97,7 @@ overlay=true
 
 ```powershell
 curl http://127.0.0.1:21578/ping
-# {"ok":true,"mod":"sfs_agent","version":"0.4.5","key_injection":"on",...}
+# {"ok":true,"mod":"sfs_agent","version":"0.4.6","key_injection":"on",...}
 ```
 
 ## 从源码编译
@@ -343,6 +343,7 @@ SFS.Parts.PartSave { name, position, orientation, NUMBER_VARIABLES, TEXT_VARIABL
 | **配置热生效**（含端口热切换，不用重启游戏） | ✅ 实测 21578 ↔ 21579 |
 | **轨道要素**（远近点 / 离心率 / 周期 / 真近点角 / 到近点远点） | ✅ 由位置速度推算 |
 | **多天体自适应**（半径 / GM / 大气高度全部从游戏读） | ✅ 实测地球与火星 |
+| **刷新间隔可配**（30ms ~ 10 分钟，可做实时展示） | ✅ |
 | **从零手拼一枚能飞的完整火箭** | ⚠️ 见下方「已知限制」 |
 
 ## 已知限制

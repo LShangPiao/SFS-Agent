@@ -113,7 +113,7 @@ Verify the install:
 
 ```powershell
 curl http://127.0.0.1:21578/ping
-# {"ok":true,"mod":"sfs_agent","version":"0.4.5","key_injection":"on",...}
+# {"ok":true,"mod":"sfs_agent","version":"0.4.6","key_injection":"on",...}
 ```
 
 ## Build from source
@@ -390,6 +390,7 @@ to `POST /key`):
 | **Hot config apply** (including port switch, no game restart) | ✅ |
 | **Orbital elements** (apsides / eccentricity / period / true anomaly / time to apsis) | ✅ |
 | **Multi-body aware** (radius / GM / atmosphere all read from the game) | ✅ |
+| **Configurable poll interval** (30ms - 10min, suitable for live display) | ✅ |
 | **Hand-assembling a flyable rocket from scratch** | ⚠️ see Known limitations |
 
 ## Known limitations

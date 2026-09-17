@@ -401,12 +401,13 @@ namespace SfsAgent
             sb.Append("var LOG_LAST=0;");
             sb.Append("var CMD_HIST=[], CMD_HI=-1;");
             sb.Append("var UI_LIST=[];");
+            sb.Append("window.__POLL=1500;");   // 默认轮询间隔（页面配置可改）
             sb.Append("function t(k){return (S[LANG]&&S[LANG][k])||(S.zh[k])||k;}");
             sb.Append("function applyLang(){");
             sb.Append("document.documentElement.lang=(LANG==='zh'?'zh-CN':'en');");
             sb.Append("var els=document.querySelectorAll('[data-i18n]');");
             sb.Append("for(var i=0;i<els.length;i++){var k=els[i].getAttribute('data-i18n');");
-            sb.Append("if(S[LANG][k]!==undefined)els[i].textContent=t(k);}");
+            sb.Append("if(S[LANG][k]!==undefined)els[i].innerHTML=t(k);}");
             sb.Append("q('#exclBtn').textContent=EXCL?t('excl_off'):t('excl_on');");
             sb.Append("q('#exclState').textContent=EXCL?t('excl_state_on'):t('excl_state_off');");
             // 日志暂停按钮的文案由状态决定，不能只靠 data-i18n
@@ -488,6 +489,34 @@ namespace SfsAgent
             sb.Append("if(s.orbit_error){h+=\"<div class='sub' style='margin-top:8px;color:#e8a33d'>\"+esc(s.orbit_error)+\"</div>\";}");
             sb.Append("q('#orbit').innerHTML=h;}");
 
+            // 轮询间隔：可由页面「配置」里的 poll_interval_ms 控制，默认 1500。
+            // 存到 window 上，改配置后重开定时器即可生效，不用刷新页面。
+            // 轮询：间隔由页面「配置」里的 poll_interval_ms 控制，默认 1500ms。
+            //
+            // 两个设计点：
+            //   1. 用 setTimeout 自排而非 setInterval —— 请求慢时不会堆积，
+            //      下一轮在本轮**结束后**才开始。做实时展示（几十毫秒间隔）时
+            //      这点很关键，否则请求会雪崩。
+            //   2. 支持低至 30ms（约 33fps），配合高速遥测可做类似性能面板的展示。
+            sb.Append("var pollTimer=null,logPollTimer=null,pollBusy=false;");
+            sb.Append("function pollMs(){var v=window.__POLL;");
+            sb.Append("return (v&&v>=30&&v<=600000)?v:1500;}");
+            sb.Append("function scheduleTick(){");
+            sb.Append("clearTimeout(pollTimer);");
+            sb.Append("pollTimer=setTimeout(async function(){");
+            sb.Append("try{await tick();}catch(e){}");
+            sb.Append("scheduleTick();},pollMs());}");
+            sb.Append("function scheduleLogPoll(){");
+            sb.Append("clearTimeout(logPollTimer);");
+            sb.Append("logPollTimer=setTimeout(function(){");
+            sb.Append("try{logTick();}catch(e){}");
+            sb.Append("scheduleLogPoll();},pollMs());}");
+            sb.Append("function startPolling(){scheduleTick();scheduleLogPoll();}");
+            sb.Append("window.__restartPolling=startPolling;");
+            // 实时模式：页面可见时才高频，切走就降频，省 CPU
+            sb.Append("document.addEventListener('visibilitychange',function(){");
+            sb.Append("if(!document.hidden)startPolling();});");
+
             sb.Append("async function tick(){");
             sb.Append("try{");
             sb.Append("var p=await (await fetch('/ping')).json();");
@@ -502,7 +531,6 @@ namespace SfsAgent
             sb.Append("row(t('height'),(s.height||0).toFixed(1)+' m')+");
             sb.Append("row(t('speed'),(s.speed||0).toFixed(1)+' m/s')+");
             sb.Append("row(t('throttle'),((s.throttle||0)*100).toFixed(0)+'%')+");
-            sb.Append("row(t('stage'),s.stage)+");
             sb.Append("row(t('mass'),(s.mass||0).toFixed(1)+' t')+'</table>';");
             // 轨道卡片：姿态角 + 轨道根数（数据来自 SFS.World.Orbit）
             sb.Append("window.__ATM=s.atmosphere_height||120000;");
@@ -512,15 +540,14 @@ namespace SfsAgent
             sb.Append("q('#build').innerHTML='<table>'+");
             sb.Append("row(t('mode'),esc(b.mode))+");
             sb.Append("row(t('parts'),b.part_count)+");
-            sb.Append("row(t('mass'),(b.total_mass||0).toFixed(2)+' t')+");
-            sb.Append("row(t('stages'),b.stage_count)+'</table><div style=\"margin-top:8px\">'+(ks||'\u2014')+'</div>';");
+            sb.Append("row(t('mass'),(b.total_mass||0).toFixed(2)+' t')+'</table><div style=\"margin-top:8px\">'+(ks||'\u2014')+'</div>';");
             sb.Append("var u=await (await fetch('/ui')).json();");
             sb.Append("UI_LIST=u.elements||[];");
             sb.Append("q('#uiCount').textContent=t('total')+' '+u.count+' '+t('items');");
             sb.Append("renderUi();");
             sb.Append("}catch(e){q('#sub').innerHTML='<span class=\"bad\">'+t('noconn')+'</span> \u00b7 '+esc(e);}");
             sb.Append("}");
-            sb.Append("tick();setInterval(tick,1500);");
+            sb.Append("startPolling();");
 
             // 独占模式：由页面直接开关（游戏里那条提示会同步跟着变）
             sb.Append("function exclBtnLabel(){q('#exclBtn').textContent=EXCL?t('excl_off'):t('excl_on');");
@@ -549,7 +576,14 @@ namespace SfsAgent
             sb.Append("async function cfgLoad(){");
             sb.Append("var c=await (await fetch('/config')).json();");
             sb.Append("var html='';for(var k in c){html+=cfgRow(k,c[k]);}");
-            sb.Append("q('#cfg').innerHTML=html||\"<span class='sub'>\"+t('empty')+\"</span>\";}");
+            // 轮询间隔即使没存过也显示出来，否则用户不知道能调
+            sb.Append("if(!('poll_interval_ms' in c)){html+=cfgRow('poll_interval_ms','1500');}");
+            sb.Append("q('#cfg').innerHTML=html||\"<span class='sub'>\"+t('empty')+\"</span>\";");
+            // 轮询间隔也来自配置：读出来后若与当前不同就重启定时器
+            sb.Append("var pi=parseInt(c.poll_interval_ms,10);");
+            sb.Append("if(!isNaN(pi)&&pi>=30&&pi<=600000){");
+            sb.Append("if(window.__POLL!==pi){window.__POLL=pi;");
+            sb.Append("if(window.__restartPolling)window.__restartPolling();}}");
             sb.Append("q('#add').onclick=function(e){e.preventDefault();");
             sb.Append("q('#cfg').insertAdjacentHTML('beforeend',cfgRow('',''));};");
             sb.Append("q('#cfg').addEventListener('click',function(e){");
@@ -561,9 +595,7 @@ namespace SfsAgent
             sb.Append("headers:{'Content-Type':'application/json'},body:JSON.stringify(cfgCollect())})).json();");
             sb.Append("q('#msg').innerHTML=r.ok?\"<span class='ok'>\"+t('saved')+\" (\"+r.changed+\" \"+t('changed')+\")</span>\":");
             sb.Append("\"<span class='bad'>\"+esc(r.error||t('failed'))+\"</span>\";");
-            sb.Append("if(r.ok)cfgLoad();}catch(ex){q('#msg').innerHTML=\"<span class='bad'>\"+esc(ex)+\"</span>\";}};");
-            sb.Append("cfgLoad();");
-            sb.Append("gsLoad();");
+            sb.Append("if(r.ok)cfgLoad();}catch(ex){q('#msg').innerHTML=\"<span class='bad'>\"+esc(ex)+\"</span>\";}};}");
 
             // ── 游戏设置：读 /settings，每项可改并应用 ──
             sb.Append("function gsRow(it){");
@@ -659,7 +691,14 @@ namespace SfsAgent
             sb.Append("LOG_OPS_ONLY=!LOG_OPS_ONLY;");
             sb.Append("q('#logBox').innerHTML='';LOG_LAST=0;syncOpsBtn();logTick();};");
             sb.Append("syncOpsBtn();");
-            sb.Append("logTick();setInterval(logTick,1500);");
+
+            // 页面初始化：这些必须在这里跑，
+            // 否则配置 / 游戏设置 / 命令行 / 说明等卡片会一直是占位符。
+            // （之前把这几行连同定时器一起删掉了，结果只有日志能动。）
+            sb.Append("applyLang();");
+            sb.Append("cfgLoad();");
+            sb.Append("gsLoad();");
+            sb.Append("startPolling();");
 
             // ── 命令行 ──
             sb.Append("function parseCmd(s){");
@@ -1038,7 +1077,10 @@ namespace SfsAgent
                     + "# 独占模式下是否显示屏幕提示（上下淡蓝渐变 + 文字）\r\n"
                     + "overlay=true\r\n"
                     + "# 界面语言：zh 或 en（配置页右上角可一键切换）\r\n"
-                    + "lang=zh\r\n",
+                    + "lang=zh\r\n"
+                    + "# \u914d\u7f6e\u9875\u7684\u5237\u65b0\u95f4\u9694\uff08\u6beb\u79d2\uff09\uff0c\u8303\u56f4 30-600000\uff0c\u9ed8\u8ba4 1500\r\n"
+                    + "# \u8c03\u5c0f\u53ef\u4ee5\u505a\u5b9e\u65f6\u6027\u80fd\u5c55\u793a\uff0830ms \u7ea6\u5408 33fps\uff09\uff1b\u8c03\u5927\u80fd\u7701 CPU\r\n"
+                    + "poll_interval_ms=1500\r\n",
                     new UTF8Encoding(false));
             }
             catch
