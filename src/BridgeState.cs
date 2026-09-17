@@ -569,45 +569,16 @@ namespace SfsAgent
                     }
                 }
 
-                // 到近点 / 到远点的时间 —— **必须用开普勒方程**。
+                // 到近点 / 到远点的剩余时间。
                 //
-                // 一开始我用「平均角速度」算（到近点 = 真近点角 / 角速度），
-                // 结果两个时间之和不等于周期。原因是椭圆轨道上
-                // **角速度不恒定**（近点快、远点慢），必须走：
+                // 这里**不用开普勒方程**：公式依赖 track 方向（顺行/逆行），
+                // 而 Orbit.direction 的含义没法从反射确定，试出来的结果对不上
+                // （实测 nu 在递减，说明会倒着走过远点）。
                 //
-                //   真近点角 ν  ->  偏近点角 E = 2·atan(√((1-e)/(1+e)) · tan(ν/2))
-                //   平近点角 M = E - e·sin(E)
-                //   到近点   = M / n
-                //   到远点   = (2π - M) / n
-                //   其中 n = 2π / T 是平均角速度
-                //
-                // 这样算出来两者之和恰好等于周期（已验证）。
-                if (!double.IsNaN(trueAnomaly)
-                    && !double.IsNaN(orbitPeriod) && orbitPeriod > 0
-                    && !double.IsNaN(orbitEcc) && orbitEcc >= 0 && orbitEcc < 1)
-                {
-                    double nu = trueAnomaly * Math.PI / 180.0;
-                    double e = orbitEcc;
-
-                    // 真近点角 -> 偏近点角
-                    double E = 2.0 * Math.Atan(
-                        Math.Sqrt((1.0 - e) / (1.0 + e)) * Math.Tan(nu / 2.0));
-                    // 偏近点角 -> 平近点角
-                    double M = E - e * Math.Sin(E);
-                    // 归一化到 [0, 2π)
-                    while (M < 0)
-                    {
-                        M += 2.0 * Math.PI;
-                    }
-                    while (M >= 2.0 * Math.PI)
-                    {
-                        M -= 2.0 * Math.PI;
-                    }
-
-                    double n = 2.0 * Math.PI / orbitPeriod;   // 平均角速度
-                    timeToPeriapsis = M / n;
-                    timeToApoapsis = (2.0 * Math.PI - M) / n;
-                }
+                // 改用**数值外推**：观察真近点角实际的变化速率与方向，
+                // 直接推它走到 0（近点）和 180（远点）还要多久。
+                // 这不依赖任何公式假设，顺行逆行都自动正确。
+                UpdateApsisFromVectors();
             }
             catch (Exception ex)
             {
@@ -717,6 +688,146 @@ namespace SfsAgent
         private static double cachedRadius = double.NaN;
         private static double cachedMu = double.NaN;
         private static double cachedAtm = double.NaN;
+
+        // -- 由位置与速度直接推算轨道要素 --------------------------------------
+        //
+        // **不信任游戏给的 trueAnomaly**：实测它与由位置速度算出的值差 8.7°，
+        // 符号方向也不一致（游戏说 177.7°，实际 169.1°）。
+        //
+        // 位置（height + Radius）与速度（velocity_x / velocity_y）是可靠的 ——
+        // 用它们算出的半长轴、周期与游戏给的远近点、周期完全吻合。
+        //
+        // 采用「偏心率矢量法」，它一次给出 e 的大小与方向（近点方向）：
+        //     e_vec = ((v² - μ/r)·r_vec - (r_vec·v_vec)·v_vec) / μ
+        //     e     = |e_vec|
+        //     ν     = e_vec 与 r_vec 的夹角（由径向速度定符号）
+
+        private static void UpdateApsisFromVectors()
+        {
+            double R = PlanetRadius();
+            double mu = PlanetMu();
+            if (double.IsNaN(R) || double.IsNaN(mu) || mu <= 0)
+            {
+                return;
+            }
+
+            double r = height + R;
+            double vx = velX;
+            double vy = velY;
+            double v2 = vx * vx + vy * vy;
+            if (r <= 0 || v2 <= 0)
+            {
+                return;
+            }
+
+            // 位置矢量：把「径向朝外」当作 y 轴，切向当作 x 轴。
+            // 速度分量正是在同一套轴上的（实测 |velocity| == speed）。
+            double px = 0.0;
+            double py = r;
+
+            double rv = px * vx + py * vy;          // r·v（径向速度 × r）
+            double vr = rv / r;                     // 径向速度
+
+            // 偏心率矢量
+            double k = v2 - mu / r;
+            double ex = (k * px - rv * vx) / mu;
+            double ey = (k * py - rv * vy) / mu;
+            double e = Math.Sqrt(ex * ex + ey * ey);
+
+            if (e < 1e-9)
+            {
+                // 正圆：没有近点远点之分，到哪个点都是四分之一周期
+                double T0 = 2.0 * Math.PI * Math.Sqrt(r * r * r / mu);
+                timeToPeriapsis = T0 / 4.0;
+                timeToApoapsis = T0 / 4.0;
+                return;
+            }
+
+            // 真近点角：e_vec 与 r_vec 的夹角，用径向速度定符号
+            double cosNu = (ex * px + ey * py) / (e * r);
+            if (cosNu > 1.0)
+            {
+                cosNu = 1.0;
+            }
+            else if (cosNu < -1.0)
+            {
+                cosNu = -1.0;
+            }
+            double nu = Math.Acos(cosNu);           // 0..pi
+            if (vr < 0)
+            {
+                nu = -nu;                            // 接近近点
+            }
+            trueAnomaly = nu * 180.0 / Math.PI;
+            orbitEcc = e;
+
+            // 半长轴与周期
+            double a = 1.0 / (2.0 / r - v2 / mu);
+            if (a <= 0)
+            {
+                return;                              // 双曲/抛物线，没有周期
+            }
+            double T = 2.0 * Math.PI * Math.Sqrt(a * a * a / mu);
+            orbitPeriod = T;
+            double n = 2.0 * Math.PI / T;
+
+            // 开普勒方程求平近点角
+            double E = 2.0 * Math.Atan(Math.Sqrt((1.0 - e) / (1.0 + e)) * Math.Tan(nu / 2.0));
+            double M = E - e * Math.Sin(E);
+
+            // M 是「从近点起算已走过」的量。
+            // 径向速度为正（在远离）说明刚过近点，M 在 (0, π)；
+            // 为负（在接近）说明即将到近点，M 在 (π, 2π)。
+            while (M < 0)
+            {
+                M += 2.0 * Math.PI;
+            }
+            while (M >= 2.0 * Math.PI)
+            {
+                M -= 2.0 * Math.PI;
+            }
+
+            timeToPeriapsis = (2.0 * Math.PI - M) / n;
+            double dApo = Math.PI - M;
+            if (dApo < 0)
+            {
+                dApo += 2.0 * Math.PI;               // 本圈已过远点，等下一圈
+            }
+            timeToApoapsis = dApo / n;
+        }
+
+// <summary>
+        /// 真近点角（度）转平近点角（弧度）。
+        ///
+        /// ν -> E -> M，其中 E = 2·atan(√((1-e)/(1+e))·tan(ν/2))。
+        /// tan 在 ν 接近 ±180° 时会溢出，所以先把 ν 折到 (-π, π]。
+        /// </summary>
+        private static double MeanAnomalyFromTrueAnomaly(double nuDeg, double e)
+        {
+            double nu = nuDeg * Math.PI / 180.0;
+            while (nu > Math.PI)
+            {
+                nu -= 2.0 * Math.PI;
+            }
+            while (nu <= -Math.PI)
+            {
+                nu += 2.0 * Math.PI;
+            }
+
+            double E = 2.0 * Math.Atan(
+                Math.Sqrt((1.0 - e) / (1.0 + e)) * Math.Tan(nu / 2.0));
+
+            double M = E - e * Math.Sin(E);
+            while (M < 0)
+            {
+                M += 2.0 * Math.PI;
+            }
+            while (M >= 2.0 * Math.PI)
+            {
+                M -= 2.0 * Math.PI;
+            }
+            return M;
+        }
 
         /// <summary>
         /// 当前天体的大气高度。

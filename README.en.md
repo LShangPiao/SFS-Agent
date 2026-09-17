@@ -113,7 +113,7 @@ Verify the install:
 
 ```powershell
 curl http://127.0.0.1:21578/ping
-# {"ok":true,"mod":"sfs_agent","version":"0.4.4","key_injection":"on",...}
+# {"ok":true,"mod":"sfs_agent","version":"0.4.5","key_injection":"on",...}
 ```
 
 ## Build from source
