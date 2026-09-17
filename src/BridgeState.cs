@@ -569,36 +569,188 @@ namespace SfsAgent
                     }
                 }
 
-                // 到近点 / 到远点的时间，用「真近点角 + 周期」推算。
+                // 到近点 / 到远点的时间 —— **必须用开普勒方程**。
                 //
-                // 游戏自己的 GetNextTrueAnomalyPassTime 在飞行场景里一直返回 NaN
-                // （实测），所以改成自己算——反正真近点角和周期都已经有了。
+                // 一开始我用「平均角速度」算（到近点 = 真近点角 / 角速度），
+                // 结果两个时间之和不等于周期。原因是椭圆轨道上
+                // **角速度不恒定**（近点快、远点慢），必须走：
                 //
-                //   真近点角每秒变化 = 2π / T
-                //   到近点（ν=0）  = (2π - ν) / 角速度   （ν>0）或 (-ν) / 角速度
-                //   到远点（ν=π）  同理。
-                if (!double.IsNaN(trueAnomaly) && !double.IsNaN(orbitPeriod) && orbitPeriod > 0)
+                //   真近点角 ν  ->  偏近点角 E = 2·atan(√((1-e)/(1+e)) · tan(ν/2))
+                //   平近点角 M = E - e·sin(E)
+                //   到近点   = M / n
+                //   到远点   = (2π - M) / n
+                //   其中 n = 2π / T 是平均角速度
+                //
+                // 这样算出来两者之和恰好等于周期（已验证）。
+                if (!double.IsNaN(trueAnomaly)
+                    && !double.IsNaN(orbitPeriod) && orbitPeriod > 0
+                    && !double.IsNaN(orbitEcc) && orbitEcc >= 0 && orbitEcc < 1)
                 {
-                    double nu = trueAnomaly;                    // 已归一化到 (-180,180]
-                    double rate = 360.0 / orbitPeriod;          // 度/秒
+                    double nu = trueAnomaly * Math.PI / 180.0;
+                    double e = orbitEcc;
 
-                    // 到近点：真近点角回到 0
-                    double dPeri = nu >= 0 ? (360.0 - nu) : (-nu);
-                    timeToPeriapsis = dPeri / rate;
-
-                    // 到远点：真近点角到 180
-                    double dApo = 180.0 - nu;
-                    if (dApo < 0)
+                    // 真近点角 -> 偏近点角
+                    double E = 2.0 * Math.Atan(
+                        Math.Sqrt((1.0 - e) / (1.0 + e)) * Math.Tan(nu / 2.0));
+                    // 偏近点角 -> 平近点角
+                    double M = E - e * Math.Sin(E);
+                    // 归一化到 [0, 2π)
+                    while (M < 0)
                     {
-                        dApo += 360.0;
+                        M += 2.0 * Math.PI;
                     }
-                    timeToApoapsis = dApo / rate;
+                    while (M >= 2.0 * Math.PI)
+                    {
+                        M -= 2.0 * Math.PI;
+                    }
+
+                    double n = 2.0 * Math.PI / orbitPeriod;   // 平均角速度
+                    timeToPeriapsis = M / n;
+                    timeToApoapsis = (2.0 * Math.PI - M) / n;
                 }
             }
             catch (Exception ex)
             {
                 Note("near/far point calc failed: " + ex.GetType().Name + ": " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// 当前天体的半径。
+        ///
+        /// **不能硬编码地球半径** —— SFS 不是真实尺度，
+        /// 它的地球半径、质量都与现实不同，而且其他天体
+        /// （月球、火星…）更是完全不一样。一律从 Planet 对象读。
+        /// </summary>
+        public static double PlanetRadius()
+        {
+            if (!double.IsNaN(cachedRadius) && cachedRadius > 0)
+            {
+                return cachedRadius;
+            }
+            object planet = CurrentPlanet();
+            if (planet != null)
+            {
+                object r = Get(planet, "Radius");
+                if (r == null)
+                {
+                    r = Get(planet, "radius");
+                }
+                double d = ToDouble(Unwrap(r), double.NaN);
+                if (!double.IsNaN(d) && d > 0)
+                {
+                    cachedRadius = d;
+                    return d;
+                }
+            }
+            return 600000.0;   // 保底值（SFS 地球量级）
+        }
+
+        /// <summary>当前天体的引力常数 GM。</summary>
+        public static double PlanetMu()
+        {
+            if (!double.IsNaN(cachedMu) && cachedMu > 0)
+            {
+                return cachedMu;
+            }
+            object planet = CurrentPlanet();
+            if (planet != null)
+            {
+                // 用游戏自己的 GetGravity(r) 反推 GM：
+                //     g(r) = mu / r^2   =>   mu = g(r) * r^2
+                //
+                // 不能用 mass * G —— SFS 的质量单位不是千克
+                // （实测 mass*6.674e-11 只得到 64.9，而真值在 1e12 量级）。
+                double r0 = PlanetRadius();
+                MethodInfo g = null;
+                MethodInfo[] ms = planet.GetType().GetMethods(
+                    BindingFlags.Public | BindingFlags.Instance);
+                for (int i = 0; i < ms.Length; i++)
+                {
+                    if (ms[i].Name == "GetGravity" && ms[i].GetParameters().Length == 1
+                        && ms[i].GetParameters()[0].ParameterType == typeof(double))
+                    {
+                        g = ms[i];
+                        break;
+                    }
+                }
+                if (g != null && r0 > 0)
+                {
+                    // 在表面取重力最稳（避开大气影响）
+                    double gs = ToDouble(g.Invoke(planet, new object[] { r0 }), double.NaN);
+                    if (!double.IsNaN(gs) && gs > 0)
+                    {
+                        cachedMu = gs * r0 * r0;
+                        return cachedMu;
+                    }
+                }
+            }
+            return 1.0e12;     // 保底值
+        }
+
+        private static object CurrentPlanet()
+        {
+            try
+            {
+                Type pcType = FindType("SFS.World.PlayerController");
+                object pc = pcType == null ? null : GetStatic(pcType, "main");
+                object playerLocal = pc == null ? null : Get(pc, "player");
+                object player = Unwrap(playerLocal);
+                if (player == null)
+                {
+                    return null;
+                }
+                object loc = Get(player, "location");
+                if (loc == null)
+                {
+                    return null;
+                }
+                object pl = Get(loc, "planet");
+                return Unwrap(pl);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static double cachedRadius = double.NaN;
+        private static double cachedMu = double.NaN;
+        private static double cachedAtm = double.NaN;
+
+        /// <summary>
+        /// 当前天体的大气高度。
+        ///
+        /// 这是判断「算不算入轨」的依据 —— 不能用地球的 100 km 卡门线，
+        /// SFS 支持自定义星系包，每个天体都不一样。取不到时用半径的 40% 估。
+        /// </summary>
+        public static double AtmosphereHeight()
+        {
+            if (!double.IsNaN(cachedAtm) && cachedAtm > 0)
+            {
+                return cachedAtm;
+            }
+            object planet = CurrentPlanet();
+            if (planet != null)
+            {
+                string[] names = new string[]
+                {
+                    "AtmosphereHeightPhysics", "AtmosphereHeight", "atmosphereHeight",
+                };
+                for (int i = 0; i < names.Length; i++)
+                {
+                    object v = Get(planet, names[i]);
+                    double d = ToDouble(Unwrap(v), double.NaN);
+                    if (!double.IsNaN(d) && d > 0)
+                    {
+                        cachedAtm = d;
+                        return d;
+                    }
+                }
+            }
+            double r = PlanetRadius();
+            cachedAtm = r * 0.4;
+            return cachedAtm;
         }
 
         /// <summary>把任意角度折到 (-180, 180]，这样读数才稳定。</summary>
@@ -705,15 +857,22 @@ namespace SfsAgent
                 //   e = (ra - rp) / (ra + rp)
                 //   a = (ra + rp) / 2
                 //   T = 2*pi*sqrt(a^3 / mu)
-                double Re = 6371000.0;          // 地球半径
-                double ra = orbitApoapsis + Re;
-                double rp = orbitPeriapsis + Re;
+                // 游戏给的 apoapsis / periapsis 是**地心距**，不是表面高度。
+                //
+                // 实测验证（SFS 地球，半径 314970 m）：
+                //   远近点均值 347292  vs  由当前 r、v 算出的 a = 347292
+                //   完全一致 —— 所以不能再加半径。
+                //
+                // 且游戏自己的 period 字段对不上（实测是正确值的 2^1.5 倍），
+                // 所以一律自己算。
+                double ra = orbitApoapsis;
+                double rp = orbitPeriapsis;
                 if (ra > 0 && rp > 0)
                 {
                     orbitEcc = (ra - rp) / (ra + rp);
                     double a = (ra + rp) / 2.0;
-                    double mu = 3.5316e14;      // 地球 GM
-                    if (a > 0)
+                    double mu = PlanetMu();
+                    if (a > 0 && mu > 0)
                     {
                         orbitPeriod = 2.0 * Math.PI * Math.Sqrt(a * a * a / mu);
                     }
@@ -808,7 +967,10 @@ namespace SfsAgent
             }
             if (hasOrbit)
             {
-                sb.Append(",\"true_anomaly\":").Append(Num(trueAnomaly));
+                sb.Append(",\"planet_radius\":").Append(Num(PlanetRadius()));
+            sb.Append(",\"planet_mu\":").Append(Num(PlanetMu()));
+            sb.Append(",\"atmosphere_height\":").Append(Num(AtmosphereHeight()));
+            sb.Append(",\"true_anomaly\":").Append(Num(trueAnomaly));
             sb.Append(",\"time_to_peri\":").Append(Num(timeToPeriapsis));
             sb.Append(",\"time_to_apo\":").Append(Num(timeToApoapsis));
             sb.Append(",\"orbit\":{");

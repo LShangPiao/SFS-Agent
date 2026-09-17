@@ -442,14 +442,22 @@ namespace SfsAgent
             sb.Append("if(Math.abs(v)>=1000)return (v/1000).toFixed(2)+' km/s';");
             sb.Append("return v.toFixed(1)+' m/s';}");
             sb.Append("function fmtT(v){");
-            sb.Append("if(v===null||v===undefined||isNaN(v)||v<=0)return '\u2014';");
-            sb.Append("if(v>=3600)return (v/3600).toFixed(2)+' \u5c0f\u65f6';");
-            sb.Append("if(v>=60)return (v/60).toFixed(1)+' \u5206\u949f';");
-            sb.Append("return v.toFixed(0)+' \u79d2';}");
+            sb.Append("if(v===null||v===undefined||isNaN(v)||v<0)return '\u2014';");
+            // 时分秒格式：1h 02m 03s / 02m 03s / 03s
+            sb.Append("var s=Math.round(v), h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;");
+            sb.Append("function p2(x){return (x<10?'0':'')+x;}");
+            sb.Append("if(h>0)return h+'h '+p2(m)+'m '+p2(sec)+'s';");
+            sb.Append("if(m>0)return m+'m '+p2(sec)+'s';");
+            sb.Append("return sec+'s';}");
             sb.Append("function orbStage(o){");
-            sb.Append("var R=6371000,apo=(o.apoapsis||0)+R,pe=(o.periapsis||0)+R;");
-            sb.Append("if(pe<=R)return t('o_sub');");
-            sb.Append("if(pe>70000&&apo>70000)return ((o.eccentricity||0)<0.1)?t('o_circ'):t('o_orbit');");
+            // 不能硬编码地球半径与卡门线 —— SFS 支持自定义星系包，
+            // 半径、大气高度都得从游戏读，由 renderOrbit 注入到 window。
+            sb.Append("var atmCfg=window.__ATM||120000;");
+            sb.Append("var PR=window.__PR||0;");
+            sb.Append("var pe=(o.periapsis!==null&&o.periapsis!==undefined)?o.periapsis-PR:null;");
+            sb.Append("if(pe===null||pe===undefined)return t('o_sub');");
+            sb.Append("if(pe<=0)return t('o_sub');");
+            sb.Append("if(pe>atmCfg)return ((o.eccentricity||0)<0.1)?t('o_circ'):t('o_orbit');");
             sb.Append("return t('o_sub');}");
             sb.Append("function renderOrbit(s){");
             sb.Append("function deg(v){return (v===null||v===undefined||isNaN(v))?'\u2014':v.toFixed(2)+'\u00b0';}");
@@ -466,8 +474,10 @@ namespace SfsAgent
             sb.Append("rows.push([t('o_target'),deg(s.target_angle)]);}");
             // 轨道根数：有就显示，没有就只显示—
             sb.Append("var o=s.orbit||{};");
-            sb.Append("rows.push([t('o_apo'),fmtM(o.apoapsis)]);");
-            sb.Append("rows.push([t('o_peri'),fmtM(o.periapsis)]);");
+            sb.Append("var PR=s.planet_radius||0;");
+            sb.Append("window.__PR=PR;window.__ATM=s.atmosphere_height||120000;");
+            sb.Append("rows.push([t('o_apo'),fmtM(o.apoapsis!==null?o.apoapsis-PR:null)]);");
+            sb.Append("rows.push([t('o_peri'),fmtM(o.periapsis!==null?o.periapsis-PR:null)]);");
             sb.Append("rows.push([t('o_ecc'),(o.eccentricity===null||o.eccentricity===undefined)?'\u2014':o.eccentricity.toFixed(4)]);");
             sb.Append("rows.push([t('o_period'),fmtT(o.period)]);");
             sb.Append("rows.push([t('o_apo_t'),fmtT(s.time_to_apo)]);");
@@ -495,6 +505,7 @@ namespace SfsAgent
             sb.Append("row(t('stage'),s.stage)+");
             sb.Append("row(t('mass'),(s.mass||0).toFixed(1)+' t')+'</table>';");
             // 轨道卡片：姿态角 + 轨道根数（数据来自 SFS.World.Orbit）
+            sb.Append("window.__ATM=s.atmosphere_height||120000;");
             sb.Append("renderOrbit(s);");
             sb.Append("var b=await (await fetch('/build')).json();");
             sb.Append("var ks=(b.part_kinds||[]).map(function(x){return esc(x.name)+' \u00d7 '+x.count}).join('<br>');");

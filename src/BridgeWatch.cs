@@ -183,21 +183,24 @@ namespace SfsAgent
             bool first = lastOrbitKey == null;
             lastOrbitKey = key;
 
-            string desc = "轨道：近点 " + M(BridgeState.orbitPeriapsis)
-                + "、远点 " + M(BridgeState.orbitApoapsis);
+            double Re = BridgeState.PlanetRadius();
+            double atm = BridgeState.AtmosphereHeight();
+            string desc = "\u8f68\u9053\uff1a\u8fd1\u70b9 " + M(BridgeState.orbitPeriapsis - Re)
+                + "\u3001\u8fdc\u70b9 " + M(BridgeState.orbitApoapsis - Re);
             if (!double.IsNaN(BridgeState.orbitPeriod) && BridgeState.orbitPeriod > 0)
             {
-                desc += "、周期 " + Time(BridgeState.orbitPeriod);
+                desc += "\u3001\u5468\u671f " + Time(BridgeState.orbitPeriod);
             }
-            if (BridgeState.orbitPeriapsis > 70000 && BridgeState.orbitApoapsis > 70000)
+            // \u5165\u8f68\u5224\u5b9a\u7528\u5929\u4f53\u771f\u5b9e\u5927\u6c14\u9ad8\u5ea6\uff0c\u4e0d\u80fd\u5199\u6b7b 70 km
+            if (BridgeState.orbitPeriapsis - Re > atm)
             {
-                desc += " —— 已入轨";
+                desc += " \u2014\u2014 \u5df2\u5165\u8f68";
             }
-            else if (BridgeState.orbitPeriapsis < 0)
+            else
             {
-                desc += " —— 近点在地面以下（会再入）";
+                desc += " \u2014\u2014 \u8fd1\u70b9\u5728\u5927\u6c14\u5185\uff08\u4f1a\u518d\u5165\uff09";
             }
-            BridgeLog.Flight((first ? "进入轨道：" : "轨道变化：") + desc.Substring(desc.IndexOf(':') + 1));
+            BridgeLog.Flight((first ? "\u8fdb\u5165\u8f68\u9053\uff1a" : "") + desc.Substring(desc.IndexOf(':') + 1));
         }
 
         private static string R(double v)
