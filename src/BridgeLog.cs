@@ -47,6 +47,8 @@ namespace SfsAgent
         private const string SrcHttp = "HTTP";
         private const string SrcGame = "\u6e38\u620f";    // 游戏
         private const string SrcState = "\u72b6\u6001";   // 状态
+        private const string SrcUser = "\u73a9\u5bb6";    // 玩家
+        private const string SrcFlight = "\u98de\u884c";  // 飞行
 
         private const string LvInfo = "\u4fe1\u606f";     // 信息
         private const string LvWarn = "\u8b66\u544a";     // 警告
@@ -151,6 +153,14 @@ namespace SfsAgent
             {
                 return SrcState;
             }
+            if (source == "user")
+            {
+                return SrcUser;
+            }
+            if (source == "flight")
+            {
+                return SrcFlight;
+            }
             return SrcMod;
         }
 
@@ -227,6 +237,18 @@ namespace SfsAgent
         public static void State(string text)
         {
             Write("state", "info", text, "ok");
+        }
+
+        /// <summary>玩家的操作（按键、点击）。</summary>
+        public static void User(string text)
+        {
+            Write("user", "info", text, "ok");
+        }
+
+        /// <summary>飞行数据变化（高度、姿态角、轨道）。</summary>
+        public static void Flight(string text)
+        {
+            Write("flight", "info", text, "ok");
         }
 
         /// <summary>

@@ -113,7 +113,7 @@ Verify the install:
 
 ```powershell
 curl http://127.0.0.1:21578/ping
-# {"ok":true,"mod":"sfs_agent","version":"0.4.0","key_injection":"on",...}
+# {"ok":true,"mod":"sfs_agent","version":"0.4.1","key_injection":"on",...}
 ```
 
 ## Build from source
@@ -382,6 +382,8 @@ to `POST /key`):
 | Screenshot | ✅ |
 | Built-in config page + auto-open browser on start | ✅ |
 | **Runtime log** (status tags / poll folding / incremental fetch) | ✅ |
+| **Player action log** (key presses) | ✅ |
+| **Flight data log** (altitude / attitude / orbital elements) | ✅ |
 | **State change detection** (screen / scene / world / rocket) | ✅ |
 | **Game log forwarding** (Player.log merged into the same panel) | ✅ |
 | **Read/write game settings** (volume / fps / FXAA / orbit lines etc.) | ✅ |

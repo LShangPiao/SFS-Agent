@@ -97,7 +97,7 @@ overlay=true
 
 ```powershell
 curl http://127.0.0.1:21578/ping
-# {"ok":true,"mod":"sfs_agent","version":"0.4.0","key_injection":"on",...}
+# {"ok":true,"mod":"sfs_agent","version":"0.4.1","key_injection":"on",...}
 ```
 
 ## 从源码编译
@@ -335,6 +335,8 @@ SFS.Parts.PartSave { name, position, orientation, NUMBER_VARIABLES, TEXT_VARIABL
 | 截图 | ✅ |
 | 内置配置页 + 启动时自动开浏览器 | ✅ |
 | **运行日志**（状态标签 / 轮询折叠 / 增量拉取） | ✅ |
+| **玩家操作记录**（按键） | ✅ |
+| **飞行数据记录**（高度 / 姿态角 / 轨道根数） | ✅ |
 | **状态变化检测**（界面 / 场景 / 世界 / 火箭变化都记录） | ✅ |
 | **游戏日志转发**（Player.log 合并进同一面板） | ✅ |
 | **读写游戏设置**（音量 / 帧率 / FXAA / 轨道线等 10 项） | ✅ 实测写入并持久生效 |

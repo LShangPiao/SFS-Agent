@@ -31,6 +31,27 @@ namespace SfsAgent
         public static bool flying;
         public static string lastError = "";
 
+        // ── 姿态与轨道 ──────────────────────────────────────────────────────
+        // 角度来自 SFS.World.LocationDrawer.main.currentAngleInfo —— 游戏 HUD
+        // 上显示的就是它；轨道由 SFS.World.Orbit.TryCreateOrbit 从飞船的
+        // Location 算出来。取不到时保持 NaN，表示「这个数据现在没有意义」。
+
+        /// <summary>火箭姿态角（度）。</summary>
+        public static double angle = double.NaN;
+        /// <summary>目标姿态角（度），无导航目标时与 angle 相同。</summary>
+        public static double targetAngle = double.NaN;
+
+        /// <summary>是否成功算出了轨道。</summary>
+        public static bool hasOrbit;
+        /// <summary>远点高度（米）。</summary>
+        public static double orbitApoapsis = double.NaN;
+        /// <summary>近点高度（米）。</summary>
+        public static double orbitPeriapsis = double.NaN;
+        /// <summary>离心率。</summary>
+        public static double orbitEcc = double.NaN;
+        /// <summary>轨道周期（秒）。</summary>
+        public static double orbitPeriod = double.NaN;
+
         /// <summary>读取成员（字段或属性）。</summary>
         public static object Get(object obj, string name)
         {
@@ -383,10 +404,16 @@ namespace SfsAgent
                         }
                         mass = ToDouble(total, mass);
                     }
+
+                    CaptureAngle();
+                    CaptureOrbit(player);
                 }
                 else
                 {
                     flying = false;
+                    hasOrbit = false;
+                    angle = double.NaN;
+                    targetAngle = double.NaN;
                 }
             }
             catch (Exception ex)
@@ -395,8 +422,127 @@ namespace SfsAgent
             }
         }
 
+        /// <summary>
+        /// 读火箭姿态角。游戏 HUD 左下角那个角度就是它，
+        /// 来源是 LocationDrawer.main.currentAngleInfo。
+        /// </summary>
+        private static void CaptureAngle()
+        {
+            try
+            {
+                Type drawerType = FindType("SFS.World.LocationDrawer");
+                if (drawerType == null)
+                {
+                    return;
+                }
+                object drawer = GetStatic(drawerType, "main");
+                if (drawer == null)
+                {
+                    return;
+                }
+                object info = Get(drawer, "currentAngleInfo");
+                if (info == null)
+                {
+                    angle = double.NaN;
+                    targetAngle = double.NaN;
+                    return;
+                }
+                object a = Get(info, "angle");
+                if (a != null)
+                {
+                    double d = ToDouble(a, double.NaN);
+                    // 弧度转角度（游戏内部用弧度）
+                    angle = double.IsNaN(d) ? double.NaN : d * 180.0 / Math.PI;
+                }
+                object ta = Get(info, "targetAngle");
+                if (ta != null)
+                {
+                    double d = ToDouble(ta, double.NaN);
+                    targetAngle = double.IsNaN(d) ? double.NaN : d * 180.0 / Math.PI;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>
+        /// 用飞船当前的位置速度算轨道。游戏自己的地图界面也是这么算的。
+        /// 不在轨道上（还在地面/大气里）时 hasOrbit 为 false。
+        /// </summary>
+        private static void CaptureOrbit(object player)
+        {
+            hasOrbit = false;
+            try
+            {
+                Type orbitType = FindType("SFS.World.Orbit");
+                Type locType = FindType("SFS.World.Location");
+                if (orbitType == null || locType == null)
+                {
+                    return;
+                }
+
+                object loc = Get(player, "location");
+                if (loc == null || !locType.IsInstanceOfType(loc))
+                {
+                    return;
+                }
+
+                // TryCreateOrbit(Location, bool, bool, out bool)
+                MethodInfo best = null;
+                MethodInfo[] ms = orbitType.GetMethods(
+                    BindingFlags.Public | BindingFlags.Static);
+                for (int i = 0; i < ms.Length; i++)
+                {
+                    if (ms[i].Name != "TryCreateOrbit")
+                    {
+                        continue;
+                    }
+                    ParameterInfo[] ps = ms[i].GetParameters();
+                    if (ps.Length == 4 && ps[0].ParameterType == locType)
+                    {
+                        best = ms[i];
+                        break;
+                    }
+                }
+                if (best == null)
+                {
+                    return;
+                }
+
+                object[] args = new object[] { loc, false, false, false };
+                object orbit = best.Invoke(null, args);
+
+                // out 参数（第 4 个）说明算没算出来
+                if (args[3] is bool && !(bool)args[3])
+                {
+                    return;
+                }
+                if (orbit == null)
+                {
+                    return;
+                }
+
+                orbitApoapsis = ToDouble(Get(orbit, "apoapsis"), double.NaN);
+                orbitPeriapsis = ToDouble(Get(orbit, "periapsis"), double.NaN);
+                orbitEcc = ToDouble(Get(orbit, "ecc"), double.NaN);
+                orbitPeriod = ToDouble(Get(orbit, "period"), double.NaN);
+                hasOrbit = !double.IsNaN(orbitApoapsis);
+            }
+            catch
+            {
+                // 算不出来不算错误：火箭还在地面上时本来就没有轨道
+            }
+        }
+
         private static string Num(double v)
         {
+            // NaN / Infinity 不是合法 JSON —— 直接输出会让解析器报错。
+            // 用 null 表示「这个数据现在没有意义」。
+            if (double.IsNaN(v) || double.IsInfinity(v))
+            {
+                return "null";
+            }
             return v.ToString("0.###", CultureInfo.InvariantCulture);
         }
 
@@ -444,6 +590,21 @@ namespace SfsAgent
             sb.Append(",\"stage\":").Append(stageId);
             sb.Append(",\"has_control\":").Append(hasControl ? "true" : "false");
             sb.Append(",\"mass\":").Append(Num(mass));
+
+            // 姿态与轨道
+            sb.Append(",\"angle\":").Append(Num(angle));
+            sb.Append(",\"target_angle\":").Append(Num(targetAngle));
+            sb.Append(",\"has_orbit\":").Append(hasOrbit ? "true" : "false");
+            if (hasOrbit)
+            {
+                sb.Append(",\"orbit\":{");
+                sb.Append("\"apoapsis\":").Append(Num(orbitApoapsis));
+                sb.Append(",\"periapsis\":").Append(Num(orbitPeriapsis));
+                sb.Append(",\"eccentricity\":").Append(Num(orbitEcc));
+                sb.Append(",\"period\":").Append(Num(orbitPeriod));
+                sb.Append("}");
+            }
+
             if (lastError.Length > 0)
             {
                 sb.Append(",\"error\":\"").Append(Str(lastError)).Append("\"");

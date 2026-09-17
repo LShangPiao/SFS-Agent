@@ -44,6 +44,10 @@ namespace SfsAgent
         // F10 的「上一帧是否按住」，用于做按下边沿检测
         private static bool f10Held;
 
+        // 玩家按键的按住状态（用于长按只记一次）
+        private static readonly Dictionary<int, bool> UserHeld =
+            new Dictionary<int, bool>();
+
 
         /// <summary>agent 注入的鼠标按键编号（0=左 1=右 2=中）。</summary>
         private static readonly List<int> ActiveMouse = new List<int>();
@@ -290,11 +294,102 @@ namespace SfsAgent
                     __result = false;
                     return false;
                 }
+
+                // 走到这里说明：既不是 agent 注入的键，也不是 F8/F10 ——
+                // 那就是**玩家自己按的**。这是日志里唯一能拿到真实玩家操作的
+                // 地方（玩家按键不经过任何 HTTP 请求）。
+                LogUserKey(key);
             }
             catch
             {
             }
             return true;
+        }
+
+        /// <summary>
+        /// 记录玩家的按键。用边沿检测保证长按只记一次按下。
+        /// </summary>
+        private static void LogUserKey(int key)
+        {
+            bool wasHeld;
+            UserHeld.TryGetValue(key, out wasHeld);
+            UserHeld[key] = true;
+            if (wasHeld)
+            {
+                return;   // 长按，已经在按下那次记过了
+            }
+            BridgeLog.User("\u6309\u4e0b " + KeyName(key));
+        }
+
+        /// <summary>松开时清掉按下标记。</summary>
+        private static void ClearUserKey(int key)
+        {
+            if (UserHeld.ContainsKey(key))
+            {
+                UserHeld[key] = false;
+            }
+        }
+
+        /// <summary>把 Unity 的 KeyCode 数字翻译成人看得懂的名字。</summary>
+        public static string KeyName(int key)
+        {
+            switch (key)
+            {
+                case 32: return "Space";
+                case 13: return "Enter";
+                case 27: return "Esc";
+                case 9: return "Tab";
+                case 8: return "Backspace";
+                case 16: return "Shift";
+                case 17: return "Ctrl";
+                case 18: return "Alt";
+                case 81: return "Q";
+                case 69: return "E";
+                case 87: return "W";
+                case 65: return "A";
+                case 83: return "S";
+                case 68: return "D";
+                case 82: return "R";
+                case 88: return "X";
+                case 90: return "Z";
+                case 67: return "C";
+                case 86: return "V";
+                case 70: return "F";
+                case 84: return "T";
+                case 71: return "G";
+                case 72: return "H";
+                case 66: return "B";
+                case 78: return "N";
+                case 77: return "M";
+                case 80: return "P";
+                case 79: return "O";
+                case 73: return "I";
+                case 75: return "K";
+                case 74: return "J";
+                case 76: return "L";
+                case 89: return "Y";
+                case 85: return "U";
+                case 49: return "1";
+                case 50: return "2";
+                case 51: return "3";
+                case 52: return "4";
+                case 53: return "5";
+                case 54: return "6";
+                case 55: return "7";
+                case 56: return "8";
+                case 57: return "9";
+                case 48: return "0";
+                case 127: return "Delete";
+                case 276: return "\u2190";
+                case 275: return "\u2192";
+                case 273: return "\u2191";
+                case 274: return "\u2193";
+            }
+            if (key >= 282 && key <= 293)
+            {
+                return "F" + (key - 281);
+            }
+            return "Key" + key;
         }
 
         public static bool GetKeyUpPrefix(object[] __args, ref bool __result)
@@ -317,6 +412,10 @@ namespace SfsAgent
                         }
                     }
                 }
+
+                // 玩家松开了这个键，清掉按住标记（下次按下才会再记一条日志）
+                ClearUserKey(key);
+
                 if (BridgeOverlay.Exclusive)
                 {
                     __result = false;
