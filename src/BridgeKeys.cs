@@ -318,7 +318,7 @@ namespace SfsAgent
             {
                 return;   // 长按，已经在按下那次记过了
             }
-            BridgeLog.User("\u6309\u4e0b " + KeyName(key));
+            BridgeLog.User(BridgeLang.T("\u6309\u4e0b ", "pressed ") + KeyName(key));
         }
 
         /// <summary>松开时清掉按下标记。</summary>

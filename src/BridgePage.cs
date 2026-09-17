@@ -291,6 +291,7 @@ namespace SfsAgent
             sb.Append("h_notes:'\u8bf4\u660e',");
             sb.Append("ui_none:'\u6ca1\u6709\u5339\u914d\u7684\u5143\u7d20',");
             sb.Append("h_orbit:'\u8f68\u9053',");
+            sb.Append("o_menu:'\u5728\u4e3b\u83dc\u5355\uff08\u672a\u8fdb\u5165\u98de\u884c\uff09',o_idle:'\u672a\u5728\u98de\u884c\u4e2d',o_nu:'\u771f\u8fd1\u70b9\u89d2',");
             sb.Append("o_apo_t:'\u5230\u8fdc\u70b9',o_peri_t:'\u5230\u8fd1\u70b9',o_ground:'\u5728\u5730\u9762',");
             sb.Append("o_alt:'\u5f53\u524d\u9ad8\u5ea6',o_speed:'\u901f\u5ea6',o_heading:'\u706b\u7bad\u671d\u5411',o_fpa:'\u901f\u5ea6\u65b9\u5411',o_pitch:'\u653b\u89d2',o_target:'\u76ee\u6807\u89d2',");
             sb.Append("o_apo:'\u8fdc\u70b9',o_peri:'\u8fd1\u70b9',o_ecc:'\u79bb\u5fc3\u7387',o_period:'\u5468\u671f',o_stage:'\u72b6\u6001',");
@@ -355,6 +356,7 @@ namespace SfsAgent
             sb.Append("h_notes:'Notes',");
             sb.Append("ui_none:'no matching elements',");
             sb.Append("h_orbit:'Orbit',");
+            sb.Append("o_menu:'At main menu (not in flight)',o_idle:'Not in flight',o_nu:'True anomaly',");
             sb.Append("o_apo_t:'To apoapsis',o_peri_t:'To periapsis',o_ground:'On ground',");
             sb.Append("o_alt:'Altitude',o_speed:'Speed',o_heading:'Heading',o_fpa:'Flight path',o_pitch:'Angle of attack',o_target:'Target',");
             sb.Append("o_apo:'Apoapsis',o_peri:'Periapsis',o_ecc:'Eccentricity',o_period:'Period',o_stage:'Status',");
@@ -451,6 +453,10 @@ namespace SfsAgent
             sb.Append("return t('o_sub');}");
             sb.Append("function renderOrbit(s){");
             sb.Append("function deg(v){return (v===null||v===undefined||isNaN(v))?'\u2014':v.toFixed(2)+'\u00b0';}");
+            // 不在飞行：只说明当前场景，不摆轨道数据
+            sb.Append("if(!s.flying){");
+            sb.Append("var msg = s.in_world ? t('o_idle') : t('o_menu');");
+            sb.Append("q('#orbit').innerHTML=\"<div class='sub'>\"+msg+\"</div>\";return;}");
             sb.Append("var rows=[[t('o_alt'),fmtM(s.height)],[t('o_speed'),fmtSpeed(s.speed)]];");
             // 四个角度全部列出：朝向 / 速度方向 / 攻角 / 目标角
             sb.Append("rows.push([t('o_heading'),deg(s.angle)]);");
@@ -458,14 +464,15 @@ namespace SfsAgent
             sb.Append("rows.push([t('o_pitch'),deg(s.pitch_angle)]);");
             sb.Append("if(s.target_angle!==null&&s.target_angle!==undefined){");
             sb.Append("rows.push([t('o_target'),deg(s.target_angle)]);}");
+            // 轨道根数：有就显示，没有就只显示—
             sb.Append("var o=s.orbit||{};");
-            // 轨道根数始终显示：拿不到就显示 —，不用提示文字替代
             sb.Append("rows.push([t('o_apo'),fmtM(o.apoapsis)]);");
             sb.Append("rows.push([t('o_peri'),fmtM(o.periapsis)]);");
             sb.Append("rows.push([t('o_ecc'),(o.eccentricity===null||o.eccentricity===undefined)?'\u2014':o.eccentricity.toFixed(4)]);");
             sb.Append("rows.push([t('o_period'),fmtT(o.period)]);");
             sb.Append("rows.push([t('o_apo_t'),fmtT(s.time_to_apo)]);");
             sb.Append("rows.push([t('o_peri_t'),fmtT(s.time_to_peri)]);");
+            sb.Append("rows.push([t('o_nu'),deg(s.true_anomaly)]);");
             sb.Append("rows.push([t('o_stage'),s.has_orbit?orbStage(o):t('o_ground')]);");
             sb.Append("var h='<table>'+rows.map(function(r){return row(r[0],r[1]);}).join('')+'</table>';");
             sb.Append("if(s.orbit_error){h+=\"<div class='sub' style='margin-top:8px;color:#e8a33d'>\"+esc(s.orbit_error)+\"</div>\";}");

@@ -47,6 +47,12 @@ namespace SfsAgent
 
         /// <summary>是否成功算出了轨道。</summary>
         public static bool hasOrbit;
+        /// <summary>当前真近点角（度）。</summary>
+        public static double trueAnomaly = double.NaN;
+        /// <summary>到下一次过近点还有多久（秒）。</summary>
+        public static double timeToPeriapsis = double.NaN;
+        /// <summary>到下一次过远点还有多久（秒）。</summary>
+        public static double timeToApoapsis = double.NaN;
 
         /// <summary>轨道算不出来时的原因（诊断用）。</summary>
         public static string orbitFailReason = "";
@@ -432,6 +438,9 @@ namespace SfsAgent
                     targetAngle = double.NaN;
                     flightPathAngle = double.NaN;
                     pitchAngle = double.NaN;
+                    trueAnomaly = double.NaN;
+                    timeToPeriapsis = double.NaN;
+                    timeToApoapsis = double.NaN;
                 }
             }
             catch (Exception ex)
@@ -507,6 +516,88 @@ namespace SfsAgent
             }
             catch
             {
+            }
+        }
+
+        /// <summary>
+        /// 算到近点 / 到远点的时间。
+        ///
+        /// 用游戏自己的 Orbit.GetNextTrueAnomalyPassTime(target, start)：
+        /// 近点 = 真近点角 0，远点 = π。拿不到就保持 NaN（页面显示 —）。
+        /// </summary>
+        private static void CaptureApsisTimes(object orbit, object player)
+        {
+            try
+            {
+                // 当前时刻（从玩家位置取）
+                object loc = Get(player, "location");
+                double now = double.NaN;
+                if (loc != null)
+                {
+                    object t = Get(loc, "time");
+                    if (t == null)
+                    {
+                        object v = Get(loc, "Value");
+                        t = v == null ? null : Get(v, "time");
+                    }
+                    now = ToDouble(t, double.NaN);
+                }
+                if (double.IsNaN(now))
+                {
+                    Note("取时间失败：location=" + (loc == null ? "null" : loc.GetType().Name));
+                    return;
+                }
+
+                MethodInfo tan = null;
+                MethodInfo[] ms = orbit.GetType().GetMethods(
+                    BindingFlags.Public | BindingFlags.Instance);
+                for (int i = 0; i < ms.Length; i++)
+                {
+                    if (ms[i].Name == "GetTrueAnomaly" && ms[i].GetParameters().Length == 1)
+                    {
+                        tan = ms[i];
+                    }
+                
+                }
+
+                if (tan != null)
+                {
+                    double a = ToDouble(tan.Invoke(orbit, new object[] { now }), double.NaN);
+                    if (!double.IsNaN(a))
+                    {
+                        trueAnomaly = Normalize(a * 180.0 / Math.PI);
+                    }
+                }
+
+                // 到近点 / 到远点的时间，用「真近点角 + 周期」推算。
+                //
+                // 游戏自己的 GetNextTrueAnomalyPassTime 在飞行场景里一直返回 NaN
+                // （实测），所以改成自己算——反正真近点角和周期都已经有了。
+                //
+                //   真近点角每秒变化 = 2π / T
+                //   到近点（ν=0）  = (2π - ν) / 角速度   （ν>0）或 (-ν) / 角速度
+                //   到远点（ν=π）  同理。
+                if (!double.IsNaN(trueAnomaly) && !double.IsNaN(orbitPeriod) && orbitPeriod > 0)
+                {
+                    double nu = trueAnomaly;                    // 已归一化到 (-180,180]
+                    double rate = 360.0 / orbitPeriod;          // 度/秒
+
+                    // 到近点：真近点角回到 0
+                    double dPeri = nu >= 0 ? (360.0 - nu) : (-nu);
+                    timeToPeriapsis = dPeri / rate;
+
+                    // 到远点：真近点角到 180
+                    double dApo = 180.0 - nu;
+                    if (dApo < 0)
+                    {
+                        dApo += 360.0;
+                    }
+                    timeToApoapsis = dApo / rate;
+                }
+            }
+            catch (Exception ex)
+            {
+                Note("near/far point calc failed: " + ex.GetType().Name + ": " + ex.Message);
             }
         }
 
@@ -629,6 +720,14 @@ namespace SfsAgent
                 }
 
                 hasOrbit = !double.IsNaN(orbitApoapsis);
+
+                // 到近点 / 到远点的时间。游戏自己提供了 API：
+                //   GetNextTrueAnomalyPassTime(targetAnomaly, startTime)
+                // 近点是真近点角 0，远点是 π。
+                if (hasOrbit)
+                {
+                    CaptureApsisTimes(orbit, player);
+                }
             }
             catch (Exception ex)
             {
@@ -709,7 +808,10 @@ namespace SfsAgent
             }
             if (hasOrbit)
             {
-                sb.Append(",\"orbit\":{");
+                sb.Append(",\"true_anomaly\":").Append(Num(trueAnomaly));
+            sb.Append(",\"time_to_peri\":").Append(Num(timeToPeriapsis));
+            sb.Append(",\"time_to_apo\":").Append(Num(timeToApoapsis));
+            sb.Append(",\"orbit\":{");
                 sb.Append("\"apoapsis\":").Append(Num(orbitApoapsis));
                 sb.Append(",\"periapsis\":").Append(Num(orbitPeriapsis));
                 sb.Append(",\"eccentricity\":").Append(Num(orbitEcc));

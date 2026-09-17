@@ -845,10 +845,10 @@ namespace SfsAgent
         {
             if (labels.Count == 0)
             {
-                return "界面上没有可点击元素";
+                return BridgeLang.T("界面上没有可点击元素", "no clickable elements");
             }
             StringBuilder sb = new StringBuilder(160);
-            sb.Append(labels.Count).Append(" 个可点击元素：");
+            sb.Append(labels.Count).Append(BridgeLang.T(" 个可点击元素：", " clickable: "));
             int n = labels.Count < 6 ? labels.Count : 6;
             for (int i = 0; i < n; i++)
             {
@@ -856,11 +856,11 @@ namespace SfsAgent
                 {
                     sb.Append(" / ");
                 }
-                sb.Append(labels[i].Length > 0 ? labels[i] : "（无标签）");
+                sb.Append(labels[i].Length > 0 ? labels[i] : BridgeLang.T("（无标签）", "(unlabeled)"));
             }
             if (labels.Count > n)
             {
-                sb.Append(" 等");
+                sb.Append(BridgeLang.T(" 等", " ..."));
             }
             return sb.ToString();
         }

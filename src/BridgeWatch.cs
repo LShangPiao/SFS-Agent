@@ -125,7 +125,8 @@ namespace SfsAgent
                 // 首次：记一条当前状态，并把基准对齐到当前档位，
                 // 免得紧接着又报一条「下降到 4.5 km」
                 lastLoggedHeight = Math.Floor(h / HeightStepFor(h)) * HeightStepFor(h);
-                BridgeLog.Flight("当前高度 " + M(h) + "、速度 " + M(BridgeState.speed) + "/s");
+                BridgeLog.Flight(BridgeLang.T("当前高度 ", "altitude ") + M(h)
+                    + BridgeLang.T("、速度 ", ", speed ") + M(BridgeState.speed) + "/s");
                 return;
             }
 
@@ -153,7 +154,7 @@ namespace SfsAgent
             if (double.IsNaN(lastLoggedAngle))
             {
                 lastLoggedAngle = a;
-                BridgeLog.Flight("当前姿态角 " + Deg(a));
+                BridgeLog.Flight(BridgeLang.T("当前姿态角 ", "attitude ") + Deg(a));
                 return;
             }
             if (Math.Abs(a - lastLoggedAngle) < AngleStep)
@@ -162,7 +163,7 @@ namespace SfsAgent
             }
             double from = lastLoggedAngle;
             lastLoggedAngle = a;
-            BridgeLog.Flight("姿态角 " + Deg(from) + " → " + Deg(a));
+            BridgeLog.Flight(BridgeLang.T("姿态角 ", "attitude ") + Deg(from) + " → " + Deg(a));
         }
 
         private static void CheckOrbit()
@@ -263,7 +264,7 @@ namespace SfsAgent
             }
             lastUiKey = key;
             changes++;
-            BridgeLog.State("界面变化：" + BridgeUi.Describe());
+            BridgeLog.State(BridgeLang.T("界面变化：", "UI changed: ") + BridgeUi.Describe());
         }
 
         // -- 场景（idle / build / flight）-------------------------------------
@@ -287,22 +288,22 @@ namespace SfsAgent
             string was = lastScene;
             lastScene = scene;
             changes++;
-            BridgeLog.State("场景变化：" + Label(was) + " → " + Label(scene));
+            BridgeLog.State(BridgeLang.T("场景变化：", "scene: ") + Label(was) + " → " + Label(scene));
         }
 
         private static string Label(string mode)
         {
             if (mode == "build")
             {
-                return "建造";
+                return BridgeLang.T("建造", "build");
             }
             if (mode == "flight")
             {
-                return "飞行";
+                return BridgeLang.T("飞行", "flight");
             }
             if (mode == "idle")
             {
-                return "空闲";
+                return BridgeLang.T("空闲", "idle");
             }
             return mode;
         }
@@ -333,27 +334,36 @@ namespace SfsAgent
 
             if (BridgeState.flying && !wasFlying)
             {
-                BridgeLog.State("开始飞行"
-                    + (BridgeState.planet.Length > 0 ? "（" + BridgeState.planet + "）" : ""));
+                BridgeLog.State(BridgeLang.T("开始飞行", "flight started")
+                    + (BridgeState.planet.Length > 0
+                        ? BridgeLang.T("（", " (") + BridgeState.planet
+                            + BridgeLang.T("）", ")")
+                        : ""));
             }
             else if (BridgeState.inWorld && !wasInWorld)
             {
-                BridgeLog.State("进入世界"
-                    + (BridgeState.planet.Length > 0 ? "：" + BridgeState.planet : ""));
+                BridgeLog.State(BridgeLang.T("进入世界", "entered world")
+                    + (BridgeState.planet.Length > 0
+                        ? BridgeLang.T("：", ": ") + BridgeState.planet
+                        : ""));
             }
             else if (!BridgeState.inWorld && wasInWorld)
             {
-                BridgeLog.State("离开世界（回到菜单或加载中）");
+                BridgeLog.State(BridgeLang.T("离开世界（回到菜单或加载中）", "left world (menu or loading)"));
             }
             else if (!BridgeState.flying && wasFlying)
             {
-                BridgeLog.State("结束飞行");
+                BridgeLog.State(BridgeLang.T("结束飞行", "flight ended"));
             }
             else
             {
-                BridgeLog.State("世界状态变化："
-                    + (BridgeState.inWorld ? "在世界中" : "不在世界")
-                    + (BridgeState.flying ? "、飞行中" : ""));
+                BridgeLog.State(BridgeLang.T("世界状态变化：", "world state: ")
+                    + (BridgeState.inWorld
+                        ? BridgeLang.T("在世界中", "in world")
+                        : BridgeLang.T("不在世界", "not in world"))
+                    + (BridgeState.flying
+                        ? BridgeLang.T("、飞行中", ", flying")
+                        : ""));
             }
         }
 
@@ -395,10 +405,11 @@ namespace SfsAgent
             int was = lastPartCount;
             lastPartCount = count;
             changes++;
-            BridgeLog.State("火箭零件数变化："
+            BridgeLog.State(BridgeLang.T("火箭零件数变化：", "parts: ")
                 + was.ToString(CultureInfo.InvariantCulture) + " → "
                 + count.ToString(CultureInfo.InvariantCulture)
-                + "（" + BridgeBuild.totalMass.ToString("0.#", CultureInfo.InvariantCulture) + " 吨）");
+                + " (" + BridgeBuild.totalMass.ToString("0.#", CultureInfo.InvariantCulture)
+                + BridgeLang.T(" 吨", " t") + ")");
         }
 
         private static string Esc(string s)
