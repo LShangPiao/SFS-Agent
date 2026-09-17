@@ -20,6 +20,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Threading;
@@ -189,6 +190,9 @@ namespace SfsAgent
         /// <summary>界面语言：zh / en。配置页与游戏内提示共用。</summary>
         public static string Lang = "zh";
 
+        /// <summary>上次尝试绑定的端口，用于判断要不要真的重开。</summary>
+        public static int BoundPort = 0;
+
         /// <summary>读取 Mods/SFS-Agent/sfs-agent.ini；读不到就用默认值。</summary>
         public static void Load()
         {
@@ -201,7 +205,7 @@ namespace SfsAgent
                 }
                 IniPath = Path.Combine(dir, "sfs-agent.ini");
                 BridgePage.LoadConfig(IniPath, out Port, out OpenBrowser);
-                SyncLang();
+                ApplyLive();
             }
             catch (Exception ex)
             {
@@ -209,17 +213,69 @@ namespace SfsAgent
             }
         }
 
-        /// <summary>把 ini 里的 lang 同步到内存（配置页改完也会调）。</summary>
-        public static void SyncLang()
+        /// <summary>
+        /// 把配置里**能实时生效**的部分同步到内存。
+        ///
+        /// 配置页保存后会调这个，所以除了端口（要么重启游戏、要么重开监听），
+        /// 其余改动都不需要重启。
+        /// </summary>
+        public static void ApplyLive()
         {
             try
             {
+                // 界面语言（配置页与游戏内提示共用）
                 string v = BridgePage.ReadValue(IniPath, "lang", "zh").Trim().ToLowerInvariant();
                 Lang = v == "en" ? "en" : "zh";
                 BridgeOverlay.Lang = Lang;
+
+                // 独占模式与覆盖层
+                bool excl = BridgePage.ReadFlag(IniPath, "exclusive_input", false);
+                bool overlayOn = BridgePage.ReadFlag(IniPath, "overlay", true);
+                BridgeOverlay.Exclusive = excl;
+                BridgeOverlay.WantVisible = excl && overlayOn;
             }
-            catch
+            catch (Exception ex)
             {
+                Main.Log("apply live config failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>兼容旧调用名。</summary>
+        public static void SyncLang()
+        {
+            ApplyLive();
+        }
+
+        /// <summary>
+        /// 端口热切换：配置页把 port 改了之后调它，无需重启游戏。
+        /// 新端口和当前一致就什么都不做。
+        /// </summary>
+        public static string RestartServer()
+        {
+            try
+            {
+                int want;
+                if (!int.TryParse(
+                        BridgePage.ReadValue(IniPath, "port", "21578").Trim(),
+                        NumberStyles.Integer, CultureInfo.InvariantCulture, out want)
+                    || want < 1024 || want > 65535)
+                {
+                    return "端口非法，未改动";
+                }
+                if (want == Port && BridgeServer.IsRunning)
+                {
+                    return "端口未变化";
+                }
+
+                BridgeServer.Stop();
+                Port = want;
+                BridgeServer.Start(Port);
+                BoundPort = Port;
+                return "桥接已在新端口 " + Port + " 上重启";
+            }
+            catch (Exception ex)
+            {
+                return "重开桥接失败：" + ex.Message + "（已改回 " + Port + "，重启游戏生效）";
             }
         }
     }
@@ -315,6 +371,7 @@ namespace SfsAgent
                 BridgeParts.Tick();
                 BridgeBlueprint.Tick();
                 BridgeCamera.Tick();
+                BridgeSettings.Tick();
                 BridgeOverlay.Tick();
             }
             catch

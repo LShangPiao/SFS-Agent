@@ -19,6 +19,12 @@ namespace SfsAgent
         private static Thread worker;
         private static volatile bool running;
 
+        /// <summary>桥接服务当前是否在监听。端口热切换会用到。</summary>
+        public static bool IsRunning
+        {
+            get { return running; }
+        }
+
         public static void Start(int port)
         {
             if (running)
@@ -222,12 +228,35 @@ namespace SfsAgent
             else if (path == "/config" && method == "POST")
             {
                 payload = BridgePage.MergeWriteJson(BridgeConfig.IniPath, body);
-                // 语言等改动立即同步到内存（游戏内提示会跟着变）
-                BridgeConfig.SyncLang();
+
+                // 保存后立刻把能实时生效的项应用掉：
+                // 语言、独占模式、覆盖层都不需要重启游戏。
+                BridgeConfig.ApplyLive();
+
+                // 端口变化单独处理：能在后台重开监听，不用重启游戏。
+                string portNote = "";
+                if (body != null && body.IndexOf("\"port\"", StringComparison.Ordinal) >= 0)
+                {
+                    portNote = BridgeConfig.RestartServer();
+                }
+
+                if (portNote.Length > 0)
+                {
+                    payload = payload.Substring(0, payload.Length - 1)
+                        + ",\"note\":\"" + Escape(portNote) + "\"}";
+                }
             }
             else if (path == "/config")
             {
                 payload = BridgePage.ReadAllJson(BridgeConfig.IniPath);
+            }
+            else if (path == "/settings" && method == "POST")
+            {
+                payload = HandleSettings(body);
+            }
+            else if (path == "/settings")
+            {
+                payload = BridgeSettings.ToJson();
             }
             else if (path == "/camera" && method == "POST")
             {
@@ -473,6 +502,25 @@ namespace SfsAgent
 
             return "{\"ok\":true,\"exclusive\":" + (want.Value ? "true" : "false")
                 + ",\"overlay\":\"" + Escape(BridgeOverlay.Status()) + "\"}";
+        }
+
+        /// <summary>
+        /// 读写游戏自身的设置（音量、界面缩放、自由视角等）。
+        /// POST 需要 key，可带 value（数值）或 text（文本值）。
+        /// </summary>
+        private static string HandleSettings(string body)
+        {
+            string key = ExtractString(body, "key");
+            if (string.IsNullOrEmpty(key))
+            {
+                return "{\"ok\":false,\"error\":\"需要提供 key；GET /settings 可以看到可写项\"}";
+            }
+            double value = ExtractNumber(body, "value");
+
+            BridgeSettings.Reset();
+            BridgeSettings.Enqueue(key, value);
+            System.Threading.Thread.Sleep(200);
+            return BridgeSettings.ResultJson();
         }
 
         /// <summary>
