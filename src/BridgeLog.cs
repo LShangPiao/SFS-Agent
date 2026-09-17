@@ -22,6 +22,8 @@ namespace SfsAgent
             public long Seq;
             public string Time;
             public string Level;
+            public string Status;   // ok / fail / busy / none
+            public bool Poll;       // true = 页面轮询产生的噪声，可被前端隐藏
             public string Text;
         }
 
@@ -52,10 +54,33 @@ namespace SfsAgent
         /// <summary>记一条日志。任何线程都能调。</summary>
         public static void Write(string level, string text)
         {
-            Write(SrcMod, level, text);
+            Write(SrcMod, level, text, "none");
         }
 
         public static void Write(string source, string level, string text)
+        {
+            Write(source, level, text, "none");
+        }
+
+        /// <summary>
+        /// 记一条日志。
+        /// status 是**执行结果**，独立于级别：
+        ///   ok   —— 成功（页面标绿）
+        ///   fail —— 失败（标红）
+        ///   busy —— 执行中（标蓝）
+        ///   none —— 无所谓成败的普通信息（不标色）
+        /// </summary>
+        public static void Write(string source, string level, string text, string status)
+        {
+            Write(source, level, text, status, false);
+        }
+
+        /// <summary>
+        /// poll=true 表示这是页面/agent 的周期性轮询（如 GET /ping），
+        /// 页面默认会把它折叠起来，免得把真正的操作淹没。
+        /// </summary>
+        public static void Write(
+            string source, string level, string text, string status, bool poll)
         {
             if (text == null)
             {
@@ -67,6 +92,8 @@ namespace SfsAgent
                 e.Seq = ++seq;
                 e.Time = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
                 e.Level = LvOf(level);
+                e.Status = StatusOf(status);
+                e.Poll = poll;
                 e.Text = "[" + srcOf(source) + "] [" + e.Level + "] " + Clip(text);
 
                 lock (Gate)
@@ -82,6 +109,15 @@ namespace SfsAgent
             catch
             {
             }
+        }
+
+        private static string StatusOf(string status)
+        {
+            if (status == "ok" || status == "fail" || status == "busy")
+            {
+                return status;
+            }
+            return "none";
         }
 
         private static string Clip(string text)
@@ -144,18 +180,42 @@ namespace SfsAgent
         /// <summary>接口调用日志（来源栏固定为 HTTP）。</summary>
         public static void Http(string text)
         {
-            Write("http", "info", text);
+            Write("http", "info", text, "none");
         }
 
         public static void HttpWarn(string text)
         {
-            Write("http", "warn", text);
+            Write("http", "warn", text, "none");
+        }
+
+        /// <summary>接口调用：成功。</summary>
+        public static void HttpOk(string text)
+        {
+            Write("http", "info", text, "ok", false);
+        }
+
+        /// <summary>接口调用：成功，但属于轮询噪声。</summary>
+        public static void HttpPoll(string text)
+        {
+            Write("http", "info", text, "ok", true);
+        }
+
+        /// <summary>接口调用：失败。</summary>
+        public static void HttpFail(string text)
+        {
+            Write("http", "error", text, "fail");
+        }
+
+        /// <summary>接口调用：执行中。</summary>
+        public static void HttpBusy(string text)
+        {
+            Write("http", "info", text, "busy");
         }
 
         /// <summary>转发的游戏日志。</summary>
         public static void Game(string text)
         {
-            Write("game", "info", text);
+            Write("game", "info", text, "none");
         }
 
         /// <summary>
@@ -215,7 +275,9 @@ namespace SfsAgent
                 sb.Append("{\"seq\":").Append(e.Seq)
                   .Append(",\"time\":\"").Append(Esc(e.Time))
                   .Append("\",\"level\":\"").Append(Esc(e.Level))
-                  .Append("\",\"text\":\"").Append(Esc(e.Text)).Append("\"}");
+                  .Append("\",\"status\":\"").Append(Esc(e.Status))
+                  .Append("\",\"poll\":").Append(e.Poll ? "true" : "false")
+                  .Append(",\"text\":\"").Append(Esc(e.Text)).Append("\"}");
             }
             sb.Append("]}");
             return sb.ToString();

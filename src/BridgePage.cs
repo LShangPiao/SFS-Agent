@@ -219,6 +219,7 @@ namespace SfsAgent
             sb.Append("<div style='display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center'>");
             sb.Append("<button id='logPause' data-i18n='pause'>\u6682\u505c</button>");
             sb.Append("<button id='logClear' data-i18n='clear'>\u6e05\u7a7a</button>");
+            sb.Append("<button id='logOps'>\u53ea\u770b\u64cd\u4f5c</button>");
             sb.Append("<span id='logInfo' class='sub' style='margin:0'></span>");
             sb.Append("</div>");
             sb.Append("<pre id='logBox' style='max-height:300px;overflow:auto;margin:0;");
@@ -374,6 +375,7 @@ namespace SfsAgent
             sb.Append("var LANG='zh';");
             // 这两个状态要在 applyLang 之前就存在（applyLang 会读它们）
             sb.Append("var EXCL=false, LOG_PAUSED=false;");
+            sb.Append("var LOG_OPS_ONLY=true;");
             sb.Append("var LOG_LAST=0;");
             sb.Append("var CMD_HIST=[], CMD_HI=-1;");
             sb.Append("function t(k){return (S[LANG]&&S[LANG][k])||(S.zh[k])||k;}");
@@ -509,10 +511,15 @@ namespace SfsAgent
             sb.Append("catch(ex){alert(ex);}});");
             // ── 日志：增量拉取，可暂停 ──
             sb.Append("function logLine(e){");
-            sb.Append("var col=e.level==='\u9519\u8bef'?'bad':(e.level==='\u8b66\u544a'?'#e8a33d':'var(--fg)');");
-            // 文本里已经带 [来源] [级别]，这里只补时间栏
+            // 状态标签：成功绿 / 失败红 / 执行中蓝；none 不显示
+            sb.Append("var tag='';");
+            sb.Append("if(e.status==='ok'){tag=\" <span style='color:#3fb950'>&#10003;</span>\";}");
+            sb.Append("else if(e.status==='fail'){tag=\" <span style='color:#f85149'>&#10007;</span>\";}");
+            sb.Append("else if(e.status==='busy'){tag=\" <span style='color:#58a6ff'>&#9679;</span>\";}");
+            sb.Append("var col=(e.status==='fail'||e.level==='\u9519\u8bef')?'#f85149':");
+            sb.Append("((e.status==='ok')?'#3fb950':((e.level==='\u8b66\u544a')?'#e8a33d':'var(--fg)'));");
             sb.Append("return \"<span style='color:var(--muted)'>[\"+esc(e.time)+\"]</span> \"+");
-            sb.Append("\"<span style='color:\"+col+\"'>\"+esc(e.text)+\"</span>\";}");
+            sb.Append("\"<span style='color:\"+col+\"'>\"+esc(e.text)+tag+\"</span>\";}");
             sb.Append("function logEmpty(){");
             sb.Append("var box=q('#logBox');");
             sb.Append("if(box.childNodes.length===0){");
@@ -522,6 +529,7 @@ namespace SfsAgent
             sb.Append("if(box.querySelector('.sub'))box.innerHTML='';");
             sb.Append("var atBottom=(box.scrollTop+box.clientHeight>=box.scrollHeight-24);");
             sb.Append("for(var i=0;i<list.length;i++){");
+            sb.Append("if(LOG_OPS_ONLY&&list[i].poll){LOG_LAST=list[i].seq;continue;}");
             sb.Append("box.insertAdjacentHTML('beforeend',logLine(list[i])+'<br>');");
             sb.Append("LOG_LAST=list[i].seq;}");
             sb.Append("while(box.childNodes.length>800){box.removeChild(box.firstChild);}");
@@ -541,6 +549,14 @@ namespace SfsAgent
             sb.Append("q('#logClear').onclick=async function(e){e.preventDefault();");
             sb.Append("await fetch('/log?clear=1');");
             sb.Append("q('#logBox').innerHTML='';LOG_LAST=0;logEmpty();};");
+            sb.Append("function syncOpsBtn(){");
+            sb.Append("var b=q('#logOps');if(!b)return;");
+            sb.Append("b.textContent=LOG_OPS_ONLY?'\u53ea\u770b\u64cd\u4f5c':'\u5168\u90e8\u65e5\u5fd7';");
+            sb.Append("b.className=LOG_OPS_ONLY?'primary':'';}");
+            sb.Append("q('#logOps').onclick=function(e){e.preventDefault();");
+            sb.Append("LOG_OPS_ONLY=!LOG_OPS_ONLY;");
+            sb.Append("q('#logBox').innerHTML='';LOG_LAST=0;syncOpsBtn();logTick();};");
+            sb.Append("syncOpsBtn();");
             sb.Append("logTick();setInterval(logTick,1500);");
 
             // ── 命令行 ──

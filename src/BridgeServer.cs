@@ -468,19 +468,67 @@ namespace SfsAgent
                     + (detail.Length > 0 ? " → " + detail : "")
                     + (status >= 400 ? "  [HTTP " + status + "]" : "");
 
-                if (status >= 400
-                    || (detail.Length > 0 && detail.StartsWith("失败", StringComparison.Ordinal)))
+                // 判定这一条是成功还是失败（页面按此标色）：
+                // 优先看返回体里的 "ok" 字段（插件自己的约定），
+                // 拿不到就退回 HTTP 状态码。
+                bool? ok = ExtractOk(payload);
+                bool bad = status >= 400 || ok == false;
+
+                // 页面/agent 每 1.5 秒轮询一次的只读接口标记为 poll，
+                // 前端默认折叠它们，否则真正的操作会被刷得看不见。
+                bool isPoll = path == "/ping"
+                    || path == "/health"
+                    || path == "/ui"
+                    || path == "/state"
+                    || path == "/build"
+                    || path == "/log";
+
+                if (bad)
                 {
-                    BridgeLog.HttpWarn(line);
+                    BridgeLog.HttpFail(line);
+                }
+                else if (isPoll)
+                {
+                    BridgeLog.HttpPoll(line);
                 }
                 else
                 {
-                    BridgeLog.Http(line);
+                    BridgeLog.HttpOk(line);
                 }
             }
             catch
             {
             }
+        }
+
+        /// <summary>从返回体里读 "ok":true / false。读不到返回 null。</summary>
+        private static bool? ExtractOk(string payload)
+        {
+            if (string.IsNullOrEmpty(payload))
+            {
+                return null;
+            }
+            int i = payload.IndexOf("\"ok\":", StringComparison.Ordinal);
+            if (i < 0)
+            {
+                return null;
+            }
+            int p = i + 5;
+            while (p < payload.Length && payload[p] == ' ')
+            {
+                p++;
+            }
+            if (p + 4 <= payload.Length
+                && string.CompareOrdinal(payload, p, "true", 0, 4) == 0)
+            {
+                return true;
+            }
+            if (p + 5 <= payload.Length
+                && string.CompareOrdinal(payload, p, "false", 0, 5) == 0)
+            {
+                return false;
+            }
+            return null;
         }
 
         private static string HandleCommand(string body)
