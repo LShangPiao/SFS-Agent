@@ -209,6 +209,40 @@ namespace SfsAgent
             sb.Append("<tr><td data-i18n='need_lang_l'>\u754c\u9762\u8bed\u8a00</td><td data-i18n='need_lang_v'>\u2026</td></tr>");
             sb.Append("</table></div>");
 
+            // 游戏设置（读写 SFS 自身的音量 / 画面 / 帧率）
+            sb.Append("<div class='card' style='grid-column:1/-1'><h2 data-i18n='h_game'>\u6e38\u620f\u8bbe\u7f6e</h2>");
+            sb.Append("<div class='sub' style='margin:0 0 12px' data-i18n='game_desc'>\u2026</div>");
+            sb.Append("<div id='gameSet'>\u2026</div></div>");
+
+            // 日志（实时）
+            sb.Append("<div class='card' style='grid-column:1/-1'><h2 data-i18n='h_log'>\u65e5\u5fd7</h2>");
+            sb.Append("<div style='display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center'>");
+            sb.Append("<button id='logPause' data-i18n='pause'>\u6682\u505c</button>");
+            sb.Append("<button id='logClear' data-i18n='clear'>\u6e05\u7a7a</button>");
+            sb.Append("<span id='logInfo' class='sub' style='margin:0'></span>");
+            sb.Append("</div>");
+            sb.Append("<pre id='logBox' style='max-height:300px;overflow:auto;margin:0;");
+            sb.Append("font-size:12px;line-height:1.6'></pre></div>");
+
+            // 命令行（直接调任意接口）
+            sb.Append("<div class='card' style='grid-column:1/-1'><h2 data-i18n='h_cmd'>\u547d\u4ee4\u884c</h2>");
+            sb.Append("<div class='sub' style='margin:0 0 10px' data-i18n='cmd_desc'>\u2026</div>");
+            sb.Append("<div style='display:flex;gap:8px'>");
+            sb.Append("<input id='cmdIn' spellcheck='false' autocomplete='off' ");
+            sb.Append("style='flex:1;font-family:ui-monospace,Consolas,monospace' placeholder='GET /state'>");
+            sb.Append("<button id='cmdRun' class='primary' data-i18n='run'>\u6267\u884c</button>");
+            sb.Append("</div>");
+            sb.Append("<div style='margin-top:8px;display:flex;gap:6px;flex-wrap:wrap'>");
+            sb.Append("<button class='quick' data-cmd='GET /state' data-i18n='q_state'>\u9065\u6d4b</button>");
+            sb.Append("<button class='quick' data-cmd='GET /ui' data-i18n='q_ui'>\u754c\u9762</button>");
+            sb.Append("<button class='quick' data-cmd='GET /build' data-i18n='q_build'>\u706b\u7bad</button>");
+            sb.Append("<button class='quick' data-cmd='GET /blueprints' data-i18n='q_bp'>\u84dd\u56fe</button>");
+            sb.Append("<button class='quick' data-cmd='GET /settings' data-i18n='q_set'>\u8bbe\u7f6e</button>");
+            sb.Append("<button class='quick' data-cmd='GET /ping' data-i18n='q_ping'>\u5b58\u6d3b</button>");
+            sb.Append("</div>");
+            sb.Append("<pre id='cmdOut' style='max-height:320px;overflow:auto;margin:10px 0 0;");
+            sb.Append("font-size:12px;line-height:1.6'></pre></div>");
+
             // 说明
             sb.Append("<div class='card'><h2 data-i18n='h_notes'>\u8bf4\u660e</h2><ul>");
             sb.Append("<li data-i18n='n1'>\u2026</li>");
@@ -248,6 +282,17 @@ namespace SfsAgent
             sb.Append("save:'\u4fdd\u5b58',add:'\u65b0\u589e\u4e00\u9879',del:'\u5220',file:'\u6587\u4ef6',");
             sb.Append("saved:'\u5df2\u4fdd\u5b58',changed:'\u9879\u53d8\u66f4',saving:'\u4fdd\u5b58\u4e2d\u2026',failed:'\u5931\u8d25',empty:'\uff08\u7a7a\uff09',");
             sb.Append("h_notes:'\u8bf4\u660e',");
+            sb.Append("h_game:'\u6e38\u620f\u8bbe\u7f6e',");
+            sb.Append("game_desc:'\u76f4\u63a5\u8bfb\u5199\u6e38\u620f\u81ea\u5df1\u7684\u8bbe\u7f6e\uff08\u97f3\u91cf\u3001\u753b\u9762\u3001\u5e27\u7387\uff09\u3002\u6539\u5b8c\u7acb\u5373\u751f\u6548\uff0c\u4e0d\u7528\u91cd\u542f\u6e38\u620f\u3002',");
+            sb.Append("game_unavailable:'\u8bfb\u4e0d\u5230\u6e38\u620f\u8bbe\u7f6e\uff08\u6e38\u620f\u53ef\u80fd\u6ca1\u5728\u8fd0\u884c\uff09',");
+            sb.Append("game_apply:'\u5e94\u7528',");
+            sb.Append("h_log:'\u65e5\u5fd7',pause:'\u6682\u505c',resume:'\u7ee7\u7eed',clear:'\u6e05\u7a7a',");
+            sb.Append("log_paused:'\u5df2\u6682\u505c',log_live:'\u5b9e\u65f6',log_empty:'\uff08\u8fd8\u6ca1\u6709\u65e5\u5fd7\uff09',");
+            sb.Append("h_cmd:'\u547d\u4ee4\u884c',run:'\u6267\u884c',");
+            sb.Append("cmd_desc:'\u76f4\u63a5\u8c03\u63a5\u53e3\uff1a\u8f93\u5165\u50cf GET /state \u6216 POST /key {\\\"vk\\\":32} \u8fd9\u6837\u7684\u547d\u4ee4\u3002\u4e0d\u7528\u5207\u5230\u7ec8\u7aef\u3002\u4e0a\u4e0b\u952e\u53ef\u7ffb\u5386\u53f2\u3002',");
+            sb.Append("q_state:'\u9065\u6d4b',q_ui:'\u754c\u9762',q_build:'\u706b\u7bad',q_bp:'\u84dd\u56fe',q_set:'\u8bbe\u7f6e',q_ping:'\u5b58\u6d3b',");
+            sb.Append("cmd_usage:'\u7528\u6cd5\uff1aGET /state\u3001POST /key {\\\"vk\\\":32}\u3001POST /command {\\\"name\\\":\\\"stage\\\"}',");
+            sb.Append("cmd_running:'\u6267\u884c\u4e2d\u2026',cmd_bad:'\u65e0\u6cd5\u89e3\u6790\u8fd9\u6761\u547d\u4ee4',");
             sb.Append("n1:'\u53ea\u76d1\u542c 127.0.0.1\uff0c\u4e0d\u5bf9\u5c40\u57df\u7f51\u5f00\u653e\u3002',");
             sb.Append("n2:'\u70b9\u51fb\u4e0e\u6309\u952e\u90fd\u662f\u6e38\u620f\u5185\u6ce8\u5165\uff0c\u4e0d\u62a2\u9f20\u6807\u4e0e\u7126\u70b9\u3002',");
             sb.Append("n3:'\u672c\u9875\u6570\u636e\u5168\u90e8\u6765\u81ea\u672c\u5730\u6865\u63a5\u670d\u52a1\uff0c\u4e0d\u8054\u7f51\u3002',");
@@ -294,6 +339,17 @@ namespace SfsAgent
             sb.Append("save:'Save',add:'Add entry',del:'del',file:'File',");
             sb.Append("saved:'saved',changed:'changed',saving:'saving\u2026',failed:'failed',empty:'(empty)',");
             sb.Append("h_notes:'Notes',");
+            sb.Append("h_game:'Game settings',");
+            sb.Append("game_desc:'Read and write the game\u2019s own settings (volume, video, fps). Applied immediately, no restart needed.',");
+            sb.Append("game_unavailable:'Game settings unavailable (is the game running?)',");
+            sb.Append("game_apply:'Apply',");
+            sb.Append("h_log:'Log',pause:'Pause',resume:'Resume',clear:'Clear',");
+            sb.Append("log_paused:'paused',log_live:'live',log_empty:'(no entries yet)',");
+            sb.Append("h_cmd:'Command line',run:'Run',");
+            sb.Append("cmd_desc:'Call the API directly: type something like GET /state or POST /key {\\\"vk\\\":32}. No need to switch to a terminal. Up/down arrows recall history.',");
+            sb.Append("q_state:'state',q_ui:'ui',q_build:'rocket',q_bp:'blueprints',q_set:'settings',q_ping:'ping',");
+            sb.Append("cmd_usage:'Usage: GET /state, POST /key {\\\"vk\\\":32}, POST /command {\\\"name\\\":\\\"stage\\\"}',");
+            sb.Append("cmd_running:'running\u2026',cmd_bad:'could not parse that command',");
             sb.Append("n1:'Listens on 127.0.0.1 only \u2014 not exposed to the LAN.',");
             sb.Append("n2:'Clicks and keys are injected in-game; your mouse and focus are untouched.',");
             sb.Append("n3:'Everything on this page comes from the local bridge; nothing goes online.',");
@@ -316,6 +372,10 @@ namespace SfsAgent
             sb.Append("need_lang_v:'The lang key in Configuration below (zh / en). The in-game overlay follows it too.'");
             sb.Append("}};");
             sb.Append("var LANG='zh';");
+            // 这两个状态要在 applyLang 之前就存在（applyLang 会读它们）
+            sb.Append("var EXCL=false, LOG_PAUSED=false;");
+            sb.Append("var LOG_LAST=0;");
+            sb.Append("var CMD_HIST=[], CMD_HI=-1;");
             sb.Append("function t(k){return (S[LANG]&&S[LANG][k])||(S.zh[k])||k;}");
             sb.Append("function applyLang(){");
             sb.Append("document.documentElement.lang=(LANG==='zh'?'zh-CN':'en');");
@@ -323,7 +383,11 @@ namespace SfsAgent
             sb.Append("for(var i=0;i<els.length;i++){var k=els[i].getAttribute('data-i18n');");
             sb.Append("if(S[LANG][k]!==undefined)els[i].textContent=t(k);}");
             sb.Append("q('#exclBtn').textContent=EXCL?t('excl_off'):t('excl_on');");
-            sb.Append("q('#exclState').textContent=EXCL?t('excl_state_on'):t('excl_state_off');}");
+            sb.Append("q('#exclState').textContent=EXCL?t('excl_state_on'):t('excl_state_off');");
+            // 日志暂停按钮的文案由状态决定，不能只靠 data-i18n
+            sb.Append("var lp=q('#logPause');if(lp)lp.textContent=LOG_PAUSED?t('resume'):t('pause');");
+            sb.Append("var oc=q('#cmdOut');if(oc&&!oc.textContent.trim())oc.textContent=t('cmd_usage');");
+            sb.Append("}");
             sb.Append("function toggleLang(){LANG=(LANG==='zh'?'en':'zh');");
             sb.Append("try{localStorage.setItem('sfsagent_lang',LANG);}catch(e){}");
             sb.Append("applyLang();cfgLoad();tick();}");
@@ -340,7 +404,6 @@ namespace SfsAgent
             sb.Append("function row(k,v){return '<tr><td>'+k+'</td><td>'+v+'</td></tr>';}");
             sb.Append("function esc(s){return String(s).replace(/[&<>]/g,function(c){");
             sb.Append("return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}");
-            sb.Append("var EXCL=false;");
             sb.Append("async function tick(){");
             sb.Append("try{");
             sb.Append("var p=await (await fetch('/ping')).json();");
@@ -414,6 +477,112 @@ namespace SfsAgent
             sb.Append("\"<span class='bad'>\"+esc(r.error||t('failed'))+\"</span>\";");
             sb.Append("if(r.ok)cfgLoad();}catch(ex){q('#msg').innerHTML=\"<span class='bad'>\"+esc(ex)+\"</span>\";}};");
             sb.Append("cfgLoad();");
+            sb.Append("gsLoad();");
+
+            // ── 游戏设置：读 /settings，每项可改并应用 ──
+            sb.Append("function gsRow(it){");
+            sb.Append("var v=(typeof it.value==='boolean')?(it.value?'1':'0'):it.value;");
+            sb.Append("return \"<div class='cfgrow'>\"+");
+            sb.Append("\"<span style='flex:0 0 210px;color:var(--muted)'>\"+esc(it.desc)+\"</span>\"+");
+            sb.Append("\"<code style='flex:0 0 120px'>\"+esc(it.key)+\"</code>\"+");
+            sb.Append("\"<input data-gk='\"+esc(it.key)+\"' value='\"+esc(v)+\"' style='flex:1'>\"+");
+            sb.Append("\"<span style='flex:0 0 88px;color:var(--muted);font-size:12px'>\"+esc(it.range)+\"</span>\"+");
+            sb.Append("\"<button data-gapply='\"+esc(it.key)+\"'>\"+t('game_apply')+\"</button></div>\";}");
+            sb.Append("async function gsLoad(){");
+            sb.Append("try{");
+            sb.Append("var r=await (await fetch('/settings')).json();");
+            sb.Append("if(!r.ok||!r.settings||!r.settings.length){");
+            sb.Append("q('#gameSet').innerHTML=\"<span class='sub'>\"+t('game_unavailable')+\"</span>\";return;}");
+            sb.Append("q('#gameSet').innerHTML=r.settings.map(gsRow).join('');");
+            sb.Append("}catch(e){q('#gameSet').innerHTML=\"<span class='sub'>\"+t('game_unavailable')+\"</span>\";}}");
+            sb.Append("function gsSet(k,v){return fetch('/settings',{method:'POST',");
+            sb.Append("headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k,value:v})})");
+            sb.Append(".then(function(r){return r.json();});}");
+            sb.Append("q('#gameSet').addEventListener('click',async function(e){");
+            sb.Append("var k=e.target&&e.target.getAttribute&&e.target.getAttribute('data-gapply');");
+            sb.Append("if(!k)return;");
+            sb.Append("var inp=q(\"input[data-gk='\"+k+\"']\");");
+            sb.Append("if(!inp)return;");
+            sb.Append("var box=q('#gameSet');");
+            sb.Append("try{var r=await gsSet(k,parseFloat(inp.value));");
+            sb.Append("if(!r.ok){alert(r.error||'failed');}else{logTick();}}");
+            sb.Append("catch(ex){alert(ex);}});");
+            // ── 日志：增量拉取，可暂停 ──
+            sb.Append("function logLine(e){");
+            sb.Append("var col=e.level==='\u9519\u8bef'?'bad':(e.level==='\u8b66\u544a'?'#e8a33d':'var(--fg)');");
+            // 文本里已经带 [来源] [级别]，这里只补时间栏
+            sb.Append("return \"<span style='color:var(--muted)'>[\"+esc(e.time)+\"]</span> \"+");
+            sb.Append("\"<span style='color:\"+col+\"'>\"+esc(e.text)+\"</span>\";}");
+            sb.Append("function logEmpty(){");
+            sb.Append("var box=q('#logBox');");
+            sb.Append("if(box.childNodes.length===0){");
+            sb.Append("box.innerHTML=\"<span class='sub'>\"+t('log_empty')+\"</span>\";}}");
+            sb.Append("function logAppend(list){");
+            sb.Append("var box=q('#logBox');");
+            sb.Append("if(box.querySelector('.sub'))box.innerHTML='';");
+            sb.Append("var atBottom=(box.scrollTop+box.clientHeight>=box.scrollHeight-24);");
+            sb.Append("for(var i=0;i<list.length;i++){");
+            sb.Append("box.insertAdjacentHTML('beforeend',logLine(list[i])+'<br>');");
+            sb.Append("LOG_LAST=list[i].seq;}");
+            sb.Append("while(box.childNodes.length>800){box.removeChild(box.firstChild);}");
+            sb.Append("if(atBottom)box.scrollTop=box.scrollHeight;}");
+            sb.Append("async function logTick(){");
+            sb.Append("if(LOG_PAUSED)return;");
+            sb.Append("try{");
+            sb.Append("var r=await (await fetch('/log?since='+LOG_LAST)).json();");
+            sb.Append("if(r.entries&&r.entries.length){logAppend(r.entries);}");
+            sb.Append("else{logEmpty();}");
+            sb.Append("q('#logInfo').textContent=t('log_live')+' \u00b7 '+r.total;");
+            sb.Append("}catch(e){q('#logInfo').textContent=esc(e);}}");
+            sb.Append("q('#logPause').onclick=function(e){e.preventDefault();");
+            sb.Append("LOG_PAUSED=!LOG_PAUSED;");
+            sb.Append("this.textContent=LOG_PAUSED?t('resume'):t('pause');");
+            sb.Append("q('#logInfo').textContent=LOG_PAUSED?t('log_paused'):t('log_live');};");
+            sb.Append("q('#logClear').onclick=async function(e){e.preventDefault();");
+            sb.Append("await fetch('/log?clear=1');");
+            sb.Append("q('#logBox').innerHTML='';LOG_LAST=0;logEmpty();};");
+            sb.Append("logTick();setInterval(logTick,1500);");
+
+            // ── 命令行 ──
+            sb.Append("function parseCmd(s){");
+            sb.Append("s=s.trim();if(!s)return null;");
+            sb.Append("var m=s.match(/^(GET|POST|PUT|DELETE)?\\s*(\\/[^\\s]*)\\s*([\\s\\S]*)$/i);");
+            sb.Append("if(!m)return null;");
+            sb.Append("var method=(m[1]||'GET').toUpperCase();");
+            sb.Append("var url=m[2];var rest=(m[3]||'').trim();");
+            sb.Append("if(!url||url.charAt(0)!=='/')return null;");
+            sb.Append("return {method:method,url:url,body:rest};}");
+            sb.Append("async function runCmd(){");
+            sb.Append("var raw=q('#cmdIn').value;var c=parseCmd(raw);");
+            sb.Append("var out=q('#cmdOut');");
+            sb.Append("if(!c){out.textContent=t('cmd_usage');return;}");
+            sb.Append("if(CMD_HIST[0]!==raw){CMD_HIST.unshift(raw);if(CMD_HIST.length>50)CMD_HIST.pop();}");
+            sb.Append("CMD_HI=-1;");
+            sb.Append("var head='> '+c.method+' '+c.url+(c.body?' '+c.body:'')+'\\n';");
+            sb.Append("out.textContent=head+t('cmd_running');");
+            sb.Append("var t0=Date.now();");
+            sb.Append("try{");
+            sb.Append("var opt={method:c.method};");
+            sb.Append("if(c.method!=='GET'&&c.body){opt.headers={'Content-Type':'application/json'};opt.body=c.body;}");
+            sb.Append("var r=await fetch(c.url,opt);");
+            sb.Append("var txt=await r.text();");
+            sb.Append("try{txt=JSON.stringify(JSON.parse(txt),null,2);}catch(e2){}");
+            sb.Append("out.textContent=head+'HTTP '+r.status+'  ('+(Date.now()-t0)+'ms)\\n\\n'+txt;");
+            sb.Append("}catch(e){out.textContent=head+'ERROR: '+e;}");
+            sb.Append("logTick();}");
+            sb.Append("q('#cmdRun').onclick=function(e){e.preventDefault();runCmd();};");
+            sb.Append("q('#cmdIn').addEventListener('keydown',function(e){");
+            sb.Append("if(e.key==='Enter'){e.preventDefault();runCmd();return;}");
+            sb.Append("if(e.key==='ArrowUp'){e.preventDefault();");
+            sb.Append("if(CMD_HI<CMD_HIST.length-1){CMD_HI++;this.value=CMD_HIST[CMD_HI];}return;}");
+            sb.Append("if(e.key==='ArrowDown'){e.preventDefault();");
+            sb.Append("if(CMD_HI>0){CMD_HI--;this.value=CMD_HIST[CMD_HI];}");
+            sb.Append("else{CMD_HI=-1;this.value='';}return;}});");
+            sb.Append("var qs=document.querySelectorAll('.quick');");
+            sb.Append("for(var qi=0;qi<qs.length;qi++){qs[qi].onclick=function(e){e.preventDefault();");
+            sb.Append("q('#cmdIn').value=this.getAttribute('data-cmd');runCmd();};}");
+            sb.Append("q('#cmdOut').textContent=t('cmd_usage');");
+
             sb.Append("applyLang();");
             sb.Append("</script></body></html>");
 

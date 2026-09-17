@@ -41,6 +41,10 @@ namespace SfsAgent
         private static int lastSeenFrame = int.MinValue;
         private const int KeyCodeF10 = 285;
 
+        // F10 的「上一帧是否按住」，用于做按下边沿检测
+        private static bool f10Held;
+
+
         /// <summary>agent 注入的鼠标按键编号（0=左 1=右 2=中）。</summary>
         private static readonly List<int> ActiveMouse = new List<int>();
         private static readonly List<int> PendingMouse = new List<int>();
@@ -79,7 +83,42 @@ namespace SfsAgent
             }
         }
 
-        /// <summary>主线程：推进帧计数、把新注入转入生效、回收过期的。</summary>
+        /// <summary>
+        /// 处理 F8 / F10 这类「模组自己的快捷键」。
+        ///
+        /// 不在 GetKeyDown 前缀里做 —— 游戏不一定在每个界面都调用 GetKeyDown
+        /// （实测主菜单就没有），会被漏掉。这里直接看注入队列，只要 agent 发了
+        /// 这两个键就一定响应。
+        /// </summary>
+        private static void HandleSpecialKeys()
+        {
+            bool f10 = false;
+            lock (Gate)
+            {
+                for (int i = 0; i < Active.Count; i++)
+                {
+                    if (Active[i].Key == KeyCodeF10)
+                    {
+                        f10 = true;
+                    }
+                }
+            }
+
+            // F10：解除独占（应急后门）
+            if (f10 && !f10Held)
+            {
+                if (BridgeOverlay.Exclusive)
+                {
+                    BridgeOverlay.Exclusive = false;
+                    BridgeOverlay.WantVisible = false;
+                    BridgeConfig.WriteBool("exclusive_input", false);
+                    Main.Log("已通过 F10 解除独占模式");
+                }
+            }
+            f10Held = f10;
+
+        }
+
         public static void Tick()
         {
             // 同一帧里帧循环补丁会被调用多次，只按真正的帧推进
@@ -90,6 +129,8 @@ namespace SfsAgent
             }
             lastSeenFrame = f;
             frameId++;
+
+            HandleSpecialKeys();
             try
             {
                 lock (Gate)
@@ -199,13 +240,30 @@ namespace SfsAgent
                     return true;
                 }
 
-                // 独占模式下 F10 作为「解除」的快捷键（鼠标被吞掉了，留个后门）
-                if (BridgeOverlay.Exclusive && key == KeyCodeF10)
+                // F10 由 HandleSpecialKeys() 在 Tick 里统一处理 ——
+                // 游戏不一定在每个界面都调用 GetKeyDown，放在这里会漏。
+                if (key == KeyCodeF10)
                 {
-                    BridgeOverlay.Exclusive = false;
-                    BridgeOverlay.WantVisible = false;
-                    __result = true;
-                    return false;
+                    bool held = false;
+                    for (int i = 0; i < Active.Count; i++)
+                    {
+                        if (Active[i].Key == key && !Active[i].Expired)
+                        {
+                            held = true;
+                            break;
+                        }
+                    }
+                    if (held)
+                    {
+                        __result = true;
+                        return false;
+                    }
+                    if (BridgeOverlay.Exclusive)
+                    {
+                        __result = false;
+                        return false;
+                    }
+                    return true;
                 }
 
                 if (Active.Count > 0)
@@ -304,6 +362,34 @@ namespace SfsAgent
             return true;
         }
 
+
+        /// <summary>取鼠标位置并换算成左上角原点（面板坐标用的是这一套）。</summary>
+        private static bool TryMousePosition(out double x, out double y)
+        {
+            x = 0;
+            y = 0;
+            try
+            {
+                Type inputType = BridgeState.FindType("UnityEngine.Input");
+                object p = BridgeState.GetStatic(inputType, "mousePosition");
+                if (p == null)
+                {
+                    return false;
+                }
+                double px = BridgeState.ToDouble(BridgeState.Get(p, "x"), 0);
+                double py = BridgeState.ToDouble(BridgeState.Get(p, "y"), 0);
+                Type screen = BridgeState.FindType("UnityEngine.Screen");
+                double h = BridgeState.ToDouble(BridgeState.GetStatic(screen, "height"), 0);
+                x = px;
+                y = (h > 0 ? h : py) - py;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private static bool TryKey(object[] args, out int key)
         {
             key = 0;
@@ -362,8 +448,9 @@ namespace SfsAgent
                 MethodInfo pMouse = typeof(BridgeKeys).GetMethod(
                     "GetMousePrefix", BindingFlags.Public | BindingFlags.Static);
                 patched += PatchOne(harmony, inputType, "GetMouseButton", typeof(int), pMouse);
-                patched += PatchOne(harmony, inputType, "GetMouseButtonDown", typeof(int), pMouse);
                 patched += PatchOne(harmony, inputType, "GetMouseButtonUp", typeof(int), pMouse);
+
+                patched += PatchOne(harmony, inputType, "GetMouseButtonDown", typeof(int), pMouse);
 
                 if (patched == 0)
                 {

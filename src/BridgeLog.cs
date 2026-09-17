@@ -1,0 +1,272 @@
+// SFS-Agent — 运行日志环形缓冲
+//
+// 模组原来只把日志丢给 UnityEngine.Debug.Log（进游戏自己的 Player.log），
+// 用户在浏览器面板上看不到。这里再留一份在内存里，供 /log 接口读取，
+// 方便排查「为什么连不上」「为什么点了没反应」这类问题。
+//
+// 环形缓冲：固定容量，满了覆盖最旧的，不会无限增长。
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+
+namespace SfsAgent
+{
+    public static class BridgeLog
+    {
+        public const int Capacity = 400;
+
+        private class Entry
+        {
+            public long Seq;
+            public string Time;
+            public string Level;
+            public string Text;
+        }
+
+        private static readonly List<Entry> Items = new List<Entry>();
+        private static readonly object Gate = new object();
+        private static long seq;
+        private static long dropped;
+
+        // ── 日志格式 ────────────────────────────────────────────────────────
+        //
+        // 统一成四栏，方便扫读：
+        //
+        //     [09:46:26] [模组] [信息] 已开始转发游戏日志
+        //     [09:46:31] [HTTP] [信息] POST /key {"vk":32} → 已发送按键 32
+        //     [09:46:40] [游戏] [信息] Unloading 527 unused Assets
+        //
+        // 来源栏有三类：模组（自身逻辑）/ HTTP（接口调用）/ 游戏（转发的 Player.log）
+        // 级别栏有三类：信息 / 警告 / 错误
+
+        private const string SrcMod = "\u6a21\u7ec4";     // 模组
+        private const string SrcHttp = "HTTP";
+        private const string SrcGame = "\u6e38\u620f";    // 游戏
+
+        private const string LvInfo = "\u4fe1\u606f";     // 信息
+        private const string LvWarn = "\u8b66\u544a";     // 警告
+        private const string LvError = "\u9519\u8bef";    // 错误
+
+        /// <summary>记一条日志。任何线程都能调。</summary>
+        public static void Write(string level, string text)
+        {
+            Write(SrcMod, level, text);
+        }
+
+        public static void Write(string source, string level, string text)
+        {
+            if (text == null)
+            {
+                return;
+            }
+            try
+            {
+                Entry e = new Entry();
+                e.Seq = ++seq;
+                e.Time = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+                e.Level = LvOf(level);
+                e.Text = "[" + srcOf(source) + "] [" + e.Level + "] " + Clip(text);
+
+                lock (Gate)
+                {
+                    Items.Add(e);
+                    while (Items.Count > Capacity)
+                    {
+                        Items.RemoveAt(0);
+                        dropped++;
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        private static string Clip(string text)
+        {
+            // 多行内容压成一行，避免把日志区撑爆
+            StringBuilder sb = new StringBuilder(text.Length);
+            for (int i = 0; i < text.Length && i < 400; i++)
+            {
+                char c = text[i];
+                sb.Append(c == '\n' || c == '\r' ? ' ' : c);
+            }
+            if (text.Length > 400)
+            {
+                sb.Append("…");
+            }
+            return sb.ToString();
+        }
+
+        private static string srcOf(string source)
+        {
+            if (source == "http")
+            {
+                return SrcHttp;
+            }
+            if (source == "game")
+            {
+                return SrcGame;
+            }
+            return SrcMod;
+        }
+
+        private static string LvOf(string level)
+        {
+            if (level == "warn" || level == LvWarn)
+            {
+                return LvWarn;
+            }
+            if (level == "error" || level == LvError)
+            {
+                return LvError;
+            }
+            return LvInfo;
+        }
+
+        public static void Info(string text)
+        {
+            Write(SrcMod, "info", text);
+        }
+
+        public static void Warn(string text)
+        {
+            Write(SrcMod, "warn", text);
+        }
+
+        public static void Error(string text)
+        {
+            Write(SrcMod, "error", text);
+        }
+
+        /// <summary>接口调用日志（来源栏固定为 HTTP）。</summary>
+        public static void Http(string text)
+        {
+            Write("http", "info", text);
+        }
+
+        public static void HttpWarn(string text)
+        {
+            Write("http", "warn", text);
+        }
+
+        /// <summary>转发的游戏日志。</summary>
+        public static void Game(string text)
+        {
+            Write("game", "info", text);
+        }
+
+        /// <summary>
+        /// 取日志。sinceSeq 为 0 时返回最近 limit 条；否则只返回比它新的
+        /// （供页面增量拉取，不重复刷）。
+        /// </summary>
+        public static string ToJson(long sinceSeq, int limit)
+        {
+            if (limit <= 0 || limit > Capacity)
+            {
+                limit = 200;
+            }
+
+            StringBuilder sb = new StringBuilder(4096);
+            List<Entry> snapshot;
+            long total;
+            long lost;
+            lock (Gate)
+            {
+                snapshot = new List<Entry>(Items);
+                total = seq;
+                lost = dropped;
+            }
+
+            int start = 0;
+            if (sinceSeq > 0)
+            {
+                // 找到第一条比 sinceSeq 大的
+                start = snapshot.Count;
+                for (int i = 0; i < snapshot.Count; i++)
+                {
+                    if (snapshot[i].Seq > sinceSeq)
+                    {
+                        start = i;
+                        break;
+                    }
+                }
+            }
+            else if (snapshot.Count > limit)
+            {
+                start = snapshot.Count - limit;
+            }
+
+            sb.Append("{\"ok\":true,\"total\":").Append(total)
+              .Append(",\"dropped\":").Append(lost)
+              .Append(",\"entries\":[");
+
+            bool first = true;
+            for (int i = start; i < snapshot.Count; i++)
+            {
+                Entry e = snapshot[i];
+                if (!first)
+                {
+                    sb.Append(",");
+                }
+                first = false;
+                sb.Append("{\"seq\":").Append(e.Seq)
+                  .Append(",\"time\":\"").Append(Esc(e.Time))
+                  .Append("\",\"level\":\"").Append(Esc(e.Level))
+                  .Append("\",\"text\":\"").Append(Esc(e.Text)).Append("\"}");
+            }
+            sb.Append("]}");
+            return sb.ToString();
+        }
+
+        public static void Clear()
+        {
+            lock (Gate)
+            {
+                Items.Clear();
+                dropped = 0;
+            }
+            Info("日志已清空");
+        }
+
+        private static string Esc(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder(s.Length + 8);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c == '"' || c == '\\')
+                {
+                    sb.Append('\\').Append(c);
+                }
+                else if (c == '\n')
+                {
+                    sb.Append("\\n");
+                }
+                else if (c == '\r')
+                {
+                    // 丢掉
+                }
+                else if (c == '\t')
+                {
+                    sb.Append("\\t");
+                }
+                else if (c < 32)
+                {
+                    sb.Append(' ');
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString();
+        }
+    }
+}

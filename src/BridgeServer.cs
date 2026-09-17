@@ -250,6 +250,30 @@ namespace SfsAgent
             {
                 payload = BridgePage.ReadAllJson(BridgeConfig.IniPath);
             }
+            else if (path == "/log")
+            {
+                // since=<seq> 时只返回更新的（供页面增量拉取）；clear=1 清空
+                if (query.IndexOf("clear=1", StringComparison.Ordinal) >= 0)
+                {
+                    BridgeLog.Clear();
+                }
+                payload = BridgeLog.ToJson(
+                    (long)QueryNumber(query, "since"),
+                    (int)QueryNumber(query, "limit"));
+            }
+            else if (path == "/gamelog")
+            {
+                // on=0 / on=1 可开关转发
+                if (query.IndexOf("on=0", StringComparison.Ordinal) >= 0)
+                {
+                    BridgeGameLog.Enabled = false;
+                }
+                else if (query.IndexOf("on=1", StringComparison.Ordinal) >= 0)
+                {
+                    BridgeGameLog.Enabled = true;
+                }
+                payload = BridgeGameLog.ToJson();
+            }
             else if (path == "/settings" && method == "POST")
             {
                 payload = HandleSettings(body);
@@ -350,6 +374,8 @@ namespace SfsAgent
                 outBytes = Encoding.UTF8.GetBytes(payload);
             }
 
+            LogRequest(method, path, status, payload, body);
+
             string head =
                 "HTTP/1.1 " + status + " " + statusText + "\r\n" +
                 "Content-Type: " + contentType + "\r\n" +
@@ -361,6 +387,100 @@ namespace SfsAgent
             stream.Write(headBytes, 0, headBytes.Length);
             stream.Write(outBytes, 0, outBytes.Length);
             stream.Flush();
+        }
+
+        /// <summary>
+        /// 把有「动作」的请求记进内存日志，供浏览器面板显示。
+        ///
+        /// 只记会改变状态的请求 —— `/ui`、`/state`、`/ping` 这类页面每 1.5 秒
+        /// 轮询一次的只读接口不记，否则日志会被刷屏，真正的动作反而看不见。
+        /// </summary>
+        private static void LogRequest(
+            string method, string path, int status, string payload, string body)
+        {
+            try
+            {
+                bool isAction = method == "POST"
+                    && (path == "/ui_click" || path == "/click" || path == "/click_raw"
+                        || path == "/key" || path == "/key_raw" || path == "/command"
+                        || path == "/build_place" || path == "/blueprint_load"
+                        || path == "/camera" || path == "/exclusive"
+                        || path == "/settings" || path == "/scroll");
+
+                bool isNotable = path == "/screenshot"
+                    || path == "/blueprints"
+                    || path == "/build_catalog"
+                    || path == "/config"
+                    || path == "/log"
+                    || path == "/ping"
+                    || path == "/settings"
+                    || path == "/gamelog"
+                    || path == "/debug_parts"
+                    || path == "/debug_methods"
+                    || path == "/debug_hit";
+
+                if (!isAction && !isNotable)
+                {
+                    return;
+                }
+                if (path == "/log")
+                {
+                    return;   // 日志接口自己不进日志
+                }
+
+                // 从返回体里摘一句人类可读的结果（按常见字段依次找）
+                string detail = "";
+                if (payload != null)
+                {
+                    string[] keys = new string[]
+                    {
+                        "\"result\":\"", "\"message\":\"", "\"note\":\"",
+                        "\"summary\":\"", "\"error\":\"",
+                    };
+                    for (int k = 0; k < keys.Length && detail.Length == 0; k++)
+                    {
+                        int i = payload.IndexOf(keys[k], StringComparison.Ordinal);
+                        if (i < 0)
+                        {
+                            continue;
+                        }
+                        int s = i + keys[k].Length;
+                        int e = payload.IndexOf('"', s);
+                        if (e > s)
+                        {
+                            detail = payload.Substring(s, e - s);
+                            if (keys[k] == "\"error\":\"")
+                            {
+                                detail = "失败：" + detail;
+                            }
+                        }
+                    }
+                }
+
+                // 请求体里也带一句，方便看清「到底点了什么 / 按了什么键」
+                string arg = "";
+                if (body != null && body.Length > 0 && body.Length < 200)
+                {
+                    arg = " " + body.Replace("\n", " ").Replace("\r", " ");
+                }
+
+                string line = method + " " + path + arg
+                    + (detail.Length > 0 ? " → " + detail : "")
+                    + (status >= 400 ? "  [HTTP " + status + "]" : "");
+
+                if (status >= 400
+                    || (detail.Length > 0 && detail.StartsWith("失败", StringComparison.Ordinal)))
+                {
+                    BridgeLog.HttpWarn(line);
+                }
+                else
+                {
+                    BridgeLog.Http(line);
+                }
+            }
+            catch
+            {
+            }
         }
 
         private static string HandleCommand(string body)

@@ -4,6 +4,7 @@
 // 即便某个字段在具体游戏版本中改名，mod 也能正常加载并降级。
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using System.Text;
@@ -130,7 +131,44 @@ namespace SfsAgent
             return null;
         }
 
+        // 类型查找缓存。
+        // FindType 会遍历所有已加载程序集，而 UI 构建/刷新时会被调用上百次，
+        // 不缓存的话主线程开销非常可观（实测每帧刷新能把游戏拖到卡顿）。
+        private static readonly Dictionary<string, Type> TypeCache =
+            new Dictionary<string, Type>();
+        private static readonly object TypeCacheGate = new object();
+
         public static Type FindType(string fullName)
+        {
+            if (string.IsNullOrEmpty(fullName))
+            {
+                return null;
+            }
+            lock (TypeCacheGate)
+            {
+                Type cached;
+                if (TypeCache.TryGetValue(fullName, out cached))
+                {
+                    // 缓存里存 null 表示「确实找不到」，避免反复扫描
+                    return cached;
+                }
+            }
+
+            Type found = ScanForType(fullName);
+
+            // 只缓存**找到**的。找不到很可能是「游戏程序集还没加载完」，
+            // 缓存 null 会让后续永远查不到。
+            if (found != null)
+            {
+                lock (TypeCacheGate)
+                {
+                    TypeCache[fullName] = found;
+                }
+            }
+            return found;
+        }
+
+        private static Type ScanForType(string fullName)
         {
             Assembly[] asms = AppDomain.CurrentDomain.GetAssemblies();
             for (int i = 0; i < asms.Length; i++)

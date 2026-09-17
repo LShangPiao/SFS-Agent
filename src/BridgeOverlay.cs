@@ -99,18 +99,18 @@ namespace SfsAgent
 
         // -- 构建 -------------------------------------------------------------
 
-        private static Type T(string name)
+        internal static Type T(string name)
         {
             return BridgeState.FindType(name);
         }
 
-        private static object NewGameObject(string name)
+        internal static object NewGameObject(string name)
         {
             Type t = T("UnityEngine.GameObject");
             return Activator.CreateInstance(t, new object[] { name });
         }
 
-        private static object AddComponent(object go, Type type)
+        internal static object AddComponent(object go, Type type)
         {
             MethodInfo m = go.GetType().GetMethod(
                 "AddComponent", BindingFlags.Public | BindingFlags.Instance,
@@ -118,7 +118,7 @@ namespace SfsAgent
             return m == null ? null : m.Invoke(go, new object[] { type });
         }
 
-        private static void SetMember(object obj, string name, object value)
+        internal static void SetMember(object obj, string name, object value)
         {
             if (obj == null || value == null)
             {
@@ -140,7 +140,7 @@ namespace SfsAgent
             }
         }
 
-        private static object MakeColor(double r, double g, double b, double a)
+        internal static object MakeColor(double r, double g, double b, double a)
         {
             Type t = T("UnityEngine.Color");
             if (t == null)
@@ -152,7 +152,7 @@ namespace SfsAgent
             return c == null ? null : c.Invoke(new object[] { (float)r, (float)g, (float)b, (float)a });
         }
 
-        private static object MakeVector2(double x, double y)
+        internal static object MakeVector2(double x, double y)
         {
             Type t = T("UnityEngine.Vector2");
             ConstructorInfo c = t.GetConstructor(new Type[] { typeof(float), typeof(float) });
@@ -160,7 +160,7 @@ namespace SfsAgent
         }
 
         /// <summary>建一个带 RectTransform 的 UI 元素并挂到 parent 下。</summary>
-        private static object NewUiElement(string name, object parent, Type componentType)
+        internal static object NewUiElement(string name, object parent, Type componentType)
         {
             object go = NewGameObject(name);
             object rt = AddComponent(go, T("UnityEngine.RectTransform"));
@@ -181,7 +181,7 @@ namespace SfsAgent
             return rt;
         }
 
-        private static void SetRect(object rt, double anchorMinX, double anchorMinY,
+        internal static void SetRect(object rt, double anchorMinX, double anchorMinY,
             double anchorMaxX, double anchorMaxY, double offsetTop, double height)
         {
             SetMember(rt, "anchorMin", MakeVector2(anchorMinX, anchorMinY));
@@ -191,7 +191,7 @@ namespace SfsAgent
             SetMember(rt, "anchoredPosition", MakeVector2(0, -offsetTop));
         }
 
-        private static object GetComponent(object rt, Type type)
+        internal static object GetComponent(object rt, Type type)
         {
             MethodInfo m = rt.GetType().GetMethod(
                 "GetComponent", BindingFlags.Public | BindingFlags.Instance,
@@ -199,7 +199,7 @@ namespace SfsAgent
             return m == null ? null : m.Invoke(rt, new object[] { type });
         }
 
-        private static object GetFont()
+        internal static object GetFont()
         {
             try
             {
@@ -233,7 +233,7 @@ namespace SfsAgent
         }
 
         /// <summary>Unity 内置的九宫格圆角 sprite，用来让按钮有圆角。</summary>
-        private static object GetRoundedSprite()
+        internal static object GetRoundedSprite()
         {
             try
             {
@@ -255,12 +255,12 @@ namespace SfsAgent
         }
 
         /// <summary>把文字节点压扁一点，视觉上更宽更扁。</summary>
-        private static void Squash(object rt, double sx, double sy)
+        internal static void Squash(object rt, double sx, double sy)
         {
             SetMember(rt, "localScale", MakeVector3(sx, sy, 1.0));
         }
 
-        private static object MakeVector3(double x, double y, double z)
+        internal static object MakeVector3(double x, double y, double z)
         {
             Type t = T("UnityEngine.Vector3");
             if (t == null)

@@ -157,6 +157,27 @@ namespace SfsAgent
         /// <summary>通过反射调用 UnityEngine.Debug.Log，避免编译期 Unity 依赖。</summary>
         public static void Log(string message)
         {
+            // 同时留一份在内存里，供浏览器面板的日志区查看
+            BridgeLog.Info(message);
+            ToUnity(message);
+        }
+
+        /// <summary>写一条警告（进内存日志 + 游戏日志）。</summary>
+        public static void LogWarn(string message)
+        {
+            BridgeLog.Warn(message);
+            ToUnity("[warn] " + message);
+        }
+
+        /// <summary>写一条错误（进内存日志 + 游戏日志）。</summary>
+        public static void LogError(string message)
+        {
+            BridgeLog.Error(message);
+            ToUnity("[error] " + message);
+        }
+
+        private static void ToUnity(string message)
+        {
             try
             {
                 Type debug = BridgeState.FindType("UnityEngine.Debug");
@@ -244,6 +265,64 @@ namespace SfsAgent
         public static void SyncLang()
         {
             ApplyLive();
+        }
+
+        // -- 单项读写（游戏内设置面板用）--------------------------------------
+
+        public static bool ReadBool(string key, bool fallback)
+        {
+            return BridgePage.ReadFlag(IniPath, key, fallback);
+        }
+
+        public static int ReadInt(string key, int fallback)
+        {
+            try
+            {
+                int v;
+                if (int.TryParse(BridgePage.ReadValue(IniPath, key, "").Trim(),
+                        NumberStyles.Integer, CultureInfo.InvariantCulture, out v))
+                {
+                    return v;
+                }
+            }
+            catch
+            {
+            }
+            return fallback;
+        }
+
+        public static string ReadText(string key, string fallback)
+        {
+            return BridgePage.ReadValue(IniPath, key, fallback);
+        }
+
+        public static void WriteBool(string key, bool value)
+        {
+            WriteKey(key, value ? "true" : "false");
+        }
+
+        public static void WriteInt(string key, int value)
+        {
+            WriteKey(key, value.ToString(CultureInfo.InvariantCulture));
+        }
+
+        public static void WriteText(string key, string value)
+        {
+            WriteKey(key, value);
+        }
+
+        /// <summary>写单个键（走和浏览器页面同一套合并写入，不会抹掉别的配置）。</summary>
+        private static void WriteKey(string key, string value)
+        {
+            try
+            {
+                string body = "{\"" + key + "\":\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
+                BridgePage.MergeWriteJson(IniPath, body);
+            }
+            catch (Exception ex)
+            {
+                Main.LogWarn("写配置 " + key + " 失败：" + ex.Message);
+            }
         }
 
         /// <summary>
@@ -373,10 +452,19 @@ namespace SfsAgent
                 BridgeCamera.Tick();
                 BridgeSettings.Tick();
                 BridgeOverlay.Tick();
+
+                // 转发游戏自己的日志：不必每帧读文件，约每秒看一次就够
+                if ((frameTick++ % 60) == 0)
+                {
+                    BridgeGameLog.Poll();
+                }
             }
             catch
             {
             }
         }
+
+        /// <summary>帧计数器，用于降低非关键任务的频率。</summary>
+        private static int frameTick;
     }
 }
