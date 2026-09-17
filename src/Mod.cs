@@ -440,6 +440,10 @@ namespace SfsAgent
             {
                 BridgeState.Capture();
                 BridgeBuild.Capture();
+
+                // 状态变化检测：界面 / 场景 / 世界 / 火箭变了就记一条日志。
+                // 放在 Capture 之后，这样比的是这一帧的新状态。
+                BridgeWatch.Poll();
                 BridgeCommands.Tick();
                 BridgeScreenshot.Tick();
                 BridgeInput.Tick();

@@ -46,6 +46,7 @@ namespace SfsAgent
         private const string SrcMod = "\u6a21\u7ec4";     // 模组
         private const string SrcHttp = "HTTP";
         private const string SrcGame = "\u6e38\u620f";    // 游戏
+        private const string SrcState = "\u72b6\u6001";   // 状态
 
         private const string LvInfo = "\u4fe1\u606f";     // 信息
         private const string LvWarn = "\u8b66\u544a";     // 警告
@@ -146,6 +147,10 @@ namespace SfsAgent
             {
                 return SrcGame;
             }
+            if (source == "state")
+            {
+                return SrcState;
+            }
             return SrcMod;
         }
 
@@ -216,6 +221,12 @@ namespace SfsAgent
         public static void Game(string text)
         {
             Write("game", "info", text, "none");
+        }
+
+        /// <summary>游戏状态变化（场景切换、界面切换、进入世界等）。</summary>
+        public static void State(string text)
+        {
+            Write("state", "info", text, "ok");
         }
 
         /// <summary>

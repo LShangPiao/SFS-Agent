@@ -820,6 +820,51 @@ namespace SfsAgent
             }
         }
 
+        /// <summary>
+        /// 当前界面的指纹：元素数量 + 前几个标签。
+        /// 用于检测「界面变了没有」，不需要完整比对。
+        /// </summary>
+        public static string Fingerprint()
+        {
+            if (labels.Count == 0)
+            {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder(96);
+            sb.Append(labels.Count);
+            int n = labels.Count < 6 ? labels.Count : 6;
+            for (int i = 0; i < n; i++)
+            {
+                sb.Append("|").Append(labels[i]);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>把当前界面描述成一句人话。</summary>
+        public static string Describe()
+        {
+            if (labels.Count == 0)
+            {
+                return "界面上没有可点击元素";
+            }
+            StringBuilder sb = new StringBuilder(160);
+            sb.Append(labels.Count).Append(" 个可点击元素：");
+            int n = labels.Count < 6 ? labels.Count : 6;
+            for (int i = 0; i < n; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(" / ");
+                }
+                sb.Append(labels[i].Length > 0 ? labels[i] : "（无标签）");
+            }
+            if (labels.Count > n)
+            {
+                sb.Append(" 等");
+            }
+            return sb.ToString();
+        }
+
         // -- 对外 -------------------------------------------------------------
 
         public static bool TryGetNormalized(int index, out double nx, out double ny)
