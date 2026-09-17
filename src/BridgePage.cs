@@ -92,16 +92,19 @@ namespace SfsAgent
 
             sb.Append("<button id='lang' onclick='toggleLang()'>\u4e2d\u6587 / EN</button>");
             sb.Append("<h1>SFS-Agent</h1>");
-            sb.Append("<div class='sub' id='sub' data-i18n='connecting'>\u2026</div>");
+            sb.Append("<div class='sub' id='sub' data-i18n='connecting'>\u2014</div>");
 
             sb.Append("<div class='grid'>");
 
             // 实时状态
             sb.Append("<div class='card'><h2 data-i18n='h_state'>\u72b6\u6001</h2>");
-            sb.Append("<div id='state'>\u2026</div></div>");
+            sb.Append("<div id='state'>\u2014</div></div>");
             // 火箭
             sb.Append("<div class='card'><h2 data-i18n='h_rocket'>\u706b\u7bad</h2>");
-            sb.Append("<div id='build'>\u2026</div></div>");
+            sb.Append("<div id='build'>\u2014</div></div>");
+            // 轨道（SFS.World.Orbit）
+            sb.Append("<div class='card'><h2 data-i18n='h_orbit'>\u8f68\u9053</h2>");
+            sb.Append("<div id='orbit'>\u2014</div></div>");
             // 界面（完整列表，可滚动 + 可搜索）
             sb.Append("<div class='card'><h2 data-i18n='h_ui'>\u754c\u9762</h2>");
             sb.Append("<input id='uiSearch' spellcheck='false' placeholder='\u641c\u7d22\u6807\u7b7e\u2026' ");
@@ -139,7 +142,7 @@ namespace SfsAgent
 
             // 独占模式
             sb.Append("<div class='card'><h2 data-i18n='h_excl'>Agent Exclusive</h2>");
-            sb.Append("<div class='sub' style='margin:0 0 10px' data-i18n='excl_desc'>\u2026</div>");
+            sb.Append("<div class='sub' style='margin:0 0 10px' data-i18n='excl_desc'>\u2014</div>");
             sb.Append("<div style='display:flex;gap:8px;align-items:center;flex-wrap:wrap'>");
             sb.Append("<button id='exclBtn' class='primary'>\u2026</button>");
             sb.Append("<span id='exclState' class='sub' style='margin:0'></span>");
@@ -147,8 +150,8 @@ namespace SfsAgent
 
             // 配置（可编辑：动态列出 ini 里所有键，不写死字段）
             sb.Append("<div class='card' style='grid-column:1/-1'><h2 data-i18n='h_cfg'>\u914d\u7f6e</h2>");
-            sb.Append("<div class='sub' style='margin:0 0 12px' data-i18n='cfg_desc'>\u2026</div>");
-            sb.Append("<div id='cfg'>\u2026</div>");
+            sb.Append("<div class='sub' style='margin:0 0 12px' data-i18n='cfg_desc'>\u2014</div>");
+            sb.Append("<div id='cfg'>\u2014</div>");
             sb.Append("<div style='margin-top:12px;display:flex;gap:8px;flex-wrap:wrap'>");
             sb.Append("<button id='save' class='primary' data-i18n='save'>\u4fdd\u5b58</button>");
             sb.Append("<button id='add' data-i18n='add'>\u65b0\u589e\u4e00\u9879</button>");
@@ -214,8 +217,8 @@ namespace SfsAgent
 
             // 游戏设置（读写 SFS 自身的音量 / 画面 / 帧率）
             sb.Append("<div class='card' style='grid-column:1/-1'><h2 data-i18n='h_game'>\u6e38\u620f\u8bbe\u7f6e</h2>");
-            sb.Append("<div class='sub' style='margin:0 0 12px' data-i18n='game_desc'>\u2026</div>");
-            sb.Append("<div id='gameSet'>\u2026</div></div>");
+            sb.Append("<div class='sub' style='margin:0 0 12px' data-i18n='game_desc'>\u2014</div>");
+            sb.Append("<div id='gameSet'>\u2014</div></div>");
 
             // 日志（实时）
             sb.Append("<div class='card' style='grid-column:1/-1'><h2 data-i18n='h_log'>\u65e5\u5fd7</h2>");
@@ -230,7 +233,7 @@ namespace SfsAgent
 
             // 命令行（直接调任意接口）
             sb.Append("<div class='card' style='grid-column:1/-1'><h2 data-i18n='h_cmd'>\u547d\u4ee4\u884c</h2>");
-            sb.Append("<div class='sub' style='margin:0 0 10px' data-i18n='cmd_desc'>\u2026</div>");
+            sb.Append("<div class='sub' style='margin:0 0 10px' data-i18n='cmd_desc'>\u2014</div>");
             sb.Append("<div style='display:flex;gap:8px'>");
             sb.Append("<input id='cmdIn' spellcheck='false' autocomplete='off' ");
             sb.Append("style='flex:1;font-family:ui-monospace,Consolas,monospace' placeholder='GET /state'>");
@@ -287,6 +290,12 @@ namespace SfsAgent
             sb.Append("saved:'\u5df2\u4fdd\u5b58',changed:'\u9879\u53d8\u66f4',saving:'\u4fdd\u5b58\u4e2d\u2026',failed:'\u5931\u8d25',empty:'\uff08\u7a7a\uff09',");
             sb.Append("h_notes:'\u8bf4\u660e',");
             sb.Append("ui_none:'\u6ca1\u6709\u5339\u914d\u7684\u5143\u7d20',");
+            sb.Append("h_orbit:'\u8f68\u9053',");
+            sb.Append("o_apo_t:'\u5230\u8fdc\u70b9',o_peri_t:'\u5230\u8fd1\u70b9',o_ground:'\u5728\u5730\u9762',");
+            sb.Append("o_alt:'\u5f53\u524d\u9ad8\u5ea6',o_speed:'\u901f\u5ea6',o_heading:'\u706b\u7bad\u671d\u5411',o_fpa:'\u901f\u5ea6\u65b9\u5411',o_pitch:'\u653b\u89d2',o_target:'\u76ee\u6807\u89d2',");
+            sb.Append("o_apo:'\u8fdc\u70b9',o_peri:'\u8fd1\u70b9',o_ecc:'\u79bb\u5fc3\u7387',o_period:'\u5468\u671f',o_stage:'\u72b6\u6001',");
+            sb.Append("o_none:'\u5c1a\u672a\u5165\u8f68\uff08\u8fdb\u5165\u592a\u7a7a\u540e\u8fd9\u91cc\u4f1a\u663e\u793a\u8f68\u9053\u6839\u6570\uff09',");
+            sb.Append("o_sub:'\u4e9a\u8f68\u9053\uff08\u4f1a\u518d\u5165\uff09',o_orbit:'\u5df2\u5165\u8f68',o_circ:'\u8fd1\u5706\u8f68\u9053',");
             sb.Append("h_game:'\u6e38\u620f\u8bbe\u7f6e',");
             sb.Append("game_desc:'\u76f4\u63a5\u8bfb\u5199\u6e38\u620f\u81ea\u5df1\u7684\u8bbe\u7f6e\uff08\u97f3\u91cf\u3001\u753b\u9762\u3001\u5e27\u7387\uff09\u3002\u6539\u5b8c\u7acb\u5373\u751f\u6548\uff0c\u4e0d\u7528\u91cd\u542f\u6e38\u620f\u3002',");
             sb.Append("game_unavailable:'\u8bfb\u4e0d\u5230\u6e38\u620f\u8bbe\u7f6e\uff08\u6e38\u620f\u53ef\u80fd\u6ca1\u5728\u8fd0\u884c\uff09',");
@@ -345,6 +354,12 @@ namespace SfsAgent
             sb.Append("saved:'saved',changed:'changed',saving:'saving\u2026',failed:'failed',empty:'(empty)',");
             sb.Append("h_notes:'Notes',");
             sb.Append("ui_none:'no matching elements',");
+            sb.Append("h_orbit:'Orbit',");
+            sb.Append("o_apo_t:'To apoapsis',o_peri_t:'To periapsis',o_ground:'On ground',");
+            sb.Append("o_alt:'Altitude',o_speed:'Speed',o_heading:'Heading',o_fpa:'Flight path',o_pitch:'Angle of attack',o_target:'Target',");
+            sb.Append("o_apo:'Apoapsis',o_peri:'Periapsis',o_ecc:'Eccentricity',o_period:'Period',o_stage:'Status',");
+            sb.Append("o_none:'Not in orbit yet (orbital elements appear once in space)',");
+            sb.Append("o_sub:'Suborbital (will re-enter)',o_orbit:'In orbit',o_circ:'Near-circular',");
             sb.Append("h_game:'Game settings',");
             sb.Append("game_desc:'Read and write the game\u2019s own settings (volume, video, fps). Applied immediately, no restart needed.',");
             sb.Append("game_unavailable:'Game settings unavailable (is the game running?)',");
@@ -412,6 +427,50 @@ namespace SfsAgent
             sb.Append("function row(k,v){return '<tr><td>'+k+'</td><td>'+v+'</td></tr>';}");
             sb.Append("function esc(s){return String(s).replace(/[&<>]/g,function(c){");
             sb.Append("return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}");
+
+            // ── 轨道卡片用的工具函数 ──
+            sb.Append("function fmtM(v){");
+            sb.Append("if(v===null||v===undefined||isNaN(v))return '\u2014';");
+            sb.Append("var a=Math.abs(v);");
+            sb.Append("if(a>=1e6)return (v/1e6).toFixed(2)+' Mm';");
+            sb.Append("if(a>=1000)return (v/1000).toFixed(2)+' km';");
+            sb.Append("return v.toFixed(1)+' m';}");
+            sb.Append("function fmtSpeed(v){");
+            sb.Append("if(v===null||v===undefined||isNaN(v))return '\u2014';");
+            sb.Append("if(Math.abs(v)>=1000)return (v/1000).toFixed(2)+' km/s';");
+            sb.Append("return v.toFixed(1)+' m/s';}");
+            sb.Append("function fmtT(v){");
+            sb.Append("if(v===null||v===undefined||isNaN(v)||v<=0)return '\u2014';");
+            sb.Append("if(v>=3600)return (v/3600).toFixed(2)+' \u5c0f\u65f6';");
+            sb.Append("if(v>=60)return (v/60).toFixed(1)+' \u5206\u949f';");
+            sb.Append("return v.toFixed(0)+' \u79d2';}");
+            sb.Append("function orbStage(o){");
+            sb.Append("var R=6371000,apo=(o.apoapsis||0)+R,pe=(o.periapsis||0)+R;");
+            sb.Append("if(pe<=R)return t('o_sub');");
+            sb.Append("if(pe>70000&&apo>70000)return ((o.eccentricity||0)<0.1)?t('o_circ'):t('o_orbit');");
+            sb.Append("return t('o_sub');}");
+            sb.Append("function renderOrbit(s){");
+            sb.Append("function deg(v){return (v===null||v===undefined||isNaN(v))?'\u2014':v.toFixed(2)+'\u00b0';}");
+            sb.Append("var rows=[[t('o_alt'),fmtM(s.height)],[t('o_speed'),fmtSpeed(s.speed)]];");
+            // 四个角度全部列出：朝向 / 速度方向 / 攻角 / 目标角
+            sb.Append("rows.push([t('o_heading'),deg(s.angle)]);");
+            sb.Append("rows.push([t('o_fpa'),deg(s.flight_path_angle)]);");
+            sb.Append("rows.push([t('o_pitch'),deg(s.pitch_angle)]);");
+            sb.Append("if(s.target_angle!==null&&s.target_angle!==undefined){");
+            sb.Append("rows.push([t('o_target'),deg(s.target_angle)]);}");
+            sb.Append("var o=s.orbit||{};");
+            // 轨道根数始终显示：拿不到就显示 —，不用提示文字替代
+            sb.Append("rows.push([t('o_apo'),fmtM(o.apoapsis)]);");
+            sb.Append("rows.push([t('o_peri'),fmtM(o.periapsis)]);");
+            sb.Append("rows.push([t('o_ecc'),(o.eccentricity===null||o.eccentricity===undefined)?'\u2014':o.eccentricity.toFixed(4)]);");
+            sb.Append("rows.push([t('o_period'),fmtT(o.period)]);");
+            sb.Append("rows.push([t('o_apo_t'),fmtT(s.time_to_apo)]);");
+            sb.Append("rows.push([t('o_peri_t'),fmtT(s.time_to_peri)]);");
+            sb.Append("rows.push([t('o_stage'),s.has_orbit?orbStage(o):t('o_ground')]);");
+            sb.Append("var h='<table>'+rows.map(function(r){return row(r[0],r[1]);}).join('')+'</table>';");
+            sb.Append("if(s.orbit_error){h+=\"<div class='sub' style='margin-top:8px;color:#e8a33d'>\"+esc(s.orbit_error)+\"</div>\";}");
+            sb.Append("q('#orbit').innerHTML=h;}");
+
             sb.Append("async function tick(){");
             sb.Append("try{");
             sb.Append("var p=await (await fetch('/ping')).json();");
@@ -428,6 +487,8 @@ namespace SfsAgent
             sb.Append("row(t('throttle'),((s.throttle||0)*100).toFixed(0)+'%')+");
             sb.Append("row(t('stage'),s.stage)+");
             sb.Append("row(t('mass'),(s.mass||0).toFixed(1)+' t')+'</table>';");
+            // 轨道卡片：姿态角 + 轨道根数（数据来自 SFS.World.Orbit）
+            sb.Append("renderOrbit(s);");
             sb.Append("var b=await (await fetch('/build')).json();");
             sb.Append("var ks=(b.part_kinds||[]).map(function(x){return esc(x.name)+' \u00d7 '+x.count}).join('<br>');");
             sb.Append("q('#build').innerHTML='<table>'+");

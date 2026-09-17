@@ -38,11 +38,27 @@ namespace SfsAgent
 
         /// <summary>火箭姿态角（度）。</summary>
         public static double angle = double.NaN;
-        /// <summary>目标姿态角（度），无导航目标时与 angle 相同。</summary>
+        /// <summary>目标姿态角（度），无导航目标时为 NaN。</summary>
         public static double targetAngle = double.NaN;
+        /// <summary>速度方向角（度）。0° = 水平向前，90° = 垂直向上。</summary>
+        public static double flightPathAngle = double.NaN;
+        /// <summary>攻角（度）：火箭朝向与速度方向的夹角。这才是航天上说的「倾角」。</summary>
+        public static double pitchAngle = double.NaN;
 
         /// <summary>是否成功算出了轨道。</summary>
         public static bool hasOrbit;
+
+        /// <summary>轨道算不出来时的原因（诊断用）。</summary>
+        public static string orbitFailReason = "";
+
+        /// <summary>记下轨道失败的原因（只记第一条，避免刷屏）。</summary>
+        private static void Note(string why)
+        {
+            if (orbitFailReason.Length == 0)
+            {
+                orbitFailReason = why;
+            }
+        }
         /// <summary>远点高度（米）。</summary>
         public static double orbitApoapsis = double.NaN;
         /// <summary>近点高度（米）。</summary>
@@ -405,7 +421,7 @@ namespace SfsAgent
                         mass = ToDouble(total, mass);
                     }
 
-                    CaptureAngle();
+                    CaptureAngle(player);
                     CaptureOrbit(player);
                 }
                 else
@@ -414,6 +430,8 @@ namespace SfsAgent
                     hasOrbit = false;
                     angle = double.NaN;
                     targetAngle = double.NaN;
+                    flightPathAngle = double.NaN;
+                    pitchAngle = double.NaN;
                 }
             }
             catch (Exception ex)
@@ -423,47 +441,92 @@ namespace SfsAgent
         }
 
         /// <summary>
-        /// 读火箭姿态角。游戏 HUD 左下角那个角度就是它，
-        /// 来源是 LocationDrawer.main.currentAngleInfo。
+        /// 读火箭姿态。
+        ///
+        /// **不用** LocationDrawer.currentAngleInfo —— 实测它在飞行场景里一直是 0
+        /// （那个组件只在地图/追踪视图下更新）。改成自己算：
+        ///
+        ///   angle       = 火箭朝向（Rigidbody2D.rotation），0° = 机头朝上
+        ///   flightPath  = 速度方向（由 velocity 分量 atan2 得到）
+        ///   pitch       = 攻角，即朝向与速度方向的夹角 —— 这才是航天里说的「倾角」
         /// </summary>
-        private static void CaptureAngle()
+        private static void CaptureAngle(object player)
         {
             try
             {
+                // ① 火箭朝向：Rigidbody2D.rotation（度）
+                object rb = Get(player, "rb2d");
+                if (rb != null)
+                {
+                    object rot = Get(rb, "rotation");
+                    if (rot != null)
+                    {
+                        angle = Normalize(ToDouble(rot, double.NaN));
+                    }
+                }
+
+                // ② 速度方向角：atan2(vy, vx)，转成「0° = 朝上」的习惯
+                if (!double.IsNaN(velX) || !double.IsNaN(velY))
+                {
+                    double sp = Math.Sqrt(velX * velX + velY * velY);
+                    if (sp > 0.5)
+                    {
+                        // 屏幕坐标系里 y 向上，所以朝上 = 90°
+                        double dir = Math.Atan2(velY, velX) * 180.0 / Math.PI;
+                        flightPathAngle = Normalize(dir - 90.0);
+                        // 攻角：朝向与速度方向的夹角
+                        pitchAngle = Normalize(angle - flightPathAngle);
+                    }
+                    else
+                    {
+                        flightPathAngle = double.NaN;
+                        pitchAngle = double.NaN;
+                    }
+                }
+
+                // ③ 顺带读一下导航目标角（有的话）
                 Type drawerType = FindType("SFS.World.LocationDrawer");
-                if (drawerType == null)
+                if (drawerType != null)
                 {
-                    return;
-                }
-                object drawer = GetStatic(drawerType, "main");
-                if (drawer == null)
-                {
-                    return;
-                }
-                object info = Get(drawer, "currentAngleInfo");
-                if (info == null)
-                {
-                    angle = double.NaN;
-                    targetAngle = double.NaN;
-                    return;
-                }
-                object a = Get(info, "angle");
-                if (a != null)
-                {
-                    double d = ToDouble(a, double.NaN);
-                    // 弧度转角度（游戏内部用弧度）
-                    angle = double.IsNaN(d) ? double.NaN : d * 180.0 / Math.PI;
-                }
-                object ta = Get(info, "targetAngle");
-                if (ta != null)
-                {
-                    double d = ToDouble(ta, double.NaN);
-                    targetAngle = double.IsNaN(d) ? double.NaN : d * 180.0 / Math.PI;
+                    object drawer = GetStatic(drawerType, "main");
+                    object info = drawer == null ? null : Get(drawer, "currentAngleInfo");
+                    if (info != null)
+                    {
+                        object ta = Get(info, "targetAngle");
+                        if (ta != null)
+                        {
+                            double d = ToDouble(ta, double.NaN);
+                            // 只在它非零时采信（零说明这个组件没在工作）
+                            if (!double.IsNaN(d) && Math.Abs(d) > 0.0001)
+                            {
+                                targetAngle = Normalize(d * 180.0 / Math.PI);
+                            }
+                        }
+                    }
                 }
             }
             catch
             {
             }
+        }
+
+        /// <summary>把任意角度折到 (-180, 180]，这样读数才稳定。</summary>
+        private static double Normalize(double deg)
+        {
+            if (double.IsNaN(deg) || double.IsInfinity(deg))
+            {
+                return deg;
+            }
+            double d = deg % 360.0;
+            if (d > 180.0)
+            {
+                d -= 360.0;
+            }
+            else if (d <= -180.0)
+            {
+                d += 360.0;
+            }
+            return d;
         }
 
         /// <summary>
@@ -479,12 +542,31 @@ namespace SfsAgent
                 Type locType = FindType("SFS.World.Location");
                 if (orbitType == null || locType == null)
                 {
+                    Note("找不到类型 Orbit=" + (orbitType != null)
+                        + " Location=" + (locType != null));
                     return;
                 }
 
-                object loc = Get(player, "location");
-                if (loc == null || !locType.IsInstanceOfType(loc))
+                // player.location 是 SFS.World.WorldLocation（MonoBehaviour），
+                // 而 TryCreateOrbit 需要的是 SFS.World.Location —— 两个是**不相关**
+                // 的类型（WorldLocation 的基类是 MonoBehaviour，不是 Location）。
+                // 真正的 Location 要从 WorldLocation.Value 属性取。
+                object wl = Get(player, "location");
+                if (wl == null)
                 {
+                    Note("player.location 为 null");
+                    return;
+                }
+
+                object loc = locType.IsInstanceOfType(wl) ? wl : Get(wl, "Value");
+                if (loc == null)
+                {
+                    Note("从 " + wl.GetType().Name + " 取 Value 失败");
+                    return;
+                }
+                if (!locType.IsInstanceOfType(loc))
+                {
+                    Note("Value 类型不符：" + loc.GetType().FullName);
                     return;
                 }
 
@@ -507,6 +589,7 @@ namespace SfsAgent
                 }
                 if (best == null)
                 {
+                    Note("没找到签名为 (Location,bool,bool,out bool) 的 TryCreateOrbit");
                     return;
                 }
 
@@ -525,13 +608,36 @@ namespace SfsAgent
 
                 orbitApoapsis = ToDouble(Get(orbit, "apoapsis"), double.NaN);
                 orbitPeriapsis = ToDouble(Get(orbit, "periapsis"), double.NaN);
-                orbitEcc = ToDouble(Get(orbit, "ecc"), double.NaN);
-                orbitPeriod = ToDouble(Get(orbit, "period"), double.NaN);
+
+                // TryCreateOrbit 返回的对象只填了远近点 —— 实测 ecc 和 period
+                // 都是 0（它没算）。这里用轨道力学自己补：
+                //   e = (ra - rp) / (ra + rp)
+                //   a = (ra + rp) / 2
+                //   T = 2*pi*sqrt(a^3 / mu)
+                double Re = 6371000.0;          // 地球半径
+                double ra = orbitApoapsis + Re;
+                double rp = orbitPeriapsis + Re;
+                if (ra > 0 && rp > 0)
+                {
+                    orbitEcc = (ra - rp) / (ra + rp);
+                    double a = (ra + rp) / 2.0;
+                    double mu = 3.5316e14;      // 地球 GM
+                    if (a > 0)
+                    {
+                        orbitPeriod = 2.0 * Math.PI * Math.Sqrt(a * a * a / mu);
+                    }
+                }
+
                 hasOrbit = !double.IsNaN(orbitApoapsis);
             }
-            catch
+            catch (Exception ex)
             {
-                // 算不出来不算错误：火箭还在地面上时本来就没有轨道
+                // 算不出来不算错误（火箭在地面上时本来就没有轨道），
+                // 但记下原因方便排查
+                if (orbitFailReason.Length == 0)
+                {
+                    orbitFailReason = ex.GetType().Name + ": " + ex.Message;
+                }
             }
         }
 
@@ -594,7 +700,13 @@ namespace SfsAgent
             // 姿态与轨道
             sb.Append(",\"angle\":").Append(Num(angle));
             sb.Append(",\"target_angle\":").Append(Num(targetAngle));
+            sb.Append(",\"flight_path_angle\":").Append(Num(flightPathAngle));
+            sb.Append(",\"pitch_angle\":").Append(Num(pitchAngle));
             sb.Append(",\"has_orbit\":").Append(hasOrbit ? "true" : "false");
+            if (orbitFailReason.Length > 0)
+            {
+                sb.Append(",\"orbit_error\":\"").Append(Str(orbitFailReason)).Append("\"");
+            }
             if (hasOrbit)
             {
                 sb.Append(",\"orbit\":{");

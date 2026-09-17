@@ -24,7 +24,6 @@ namespace SfsAgent
         private static string lastUiKey;
         private static string lastScene;
         private static string lastWorldKey;
-        private static string lastBuildKey;
 
         private static int changes;
 
@@ -61,13 +60,20 @@ namespace SfsAgent
 
         // -- 飞行数据（高度 / 角度 / 轨道）------------------------------------
         //
-        // 这些值一直在变，逐帧记录会把日志刷爆。所以只在**跨过阈值**时记：
-        //   高度   —— 每变化 1000 m 记一次（上升/下降分别记）
-        //   角度   —— 每变化 15° 记一次（转向/俯仰）
-        //   轨道   —— 近点/远点/周期变化就记（这是离散事件，不会刷屏）
+        // 这些值一直在变，逐帧记录会把日志刷爆。所以只在**跨过阈值**时记。
+        //
+        // 阈值是**按高度自适应**的 —— 刚起飞时每 100 米都值得记（此时正是
+        // 最需要看清状态的阶段），到了几十公里高空再按 1000 米记，
+        // 免得几十条「爬升到 xx km」淹没有用信息。
+        //
+        //   高度 < 1 km   → 每 100 m
+        //   高度 < 10 km  → 每 500 m
+        //   高度 < 100 km → 每 1 km
+        //   更高          → 每 10 km
+        //
+        // 角度每 5° 记一次（转向/俯仰在飞行中是关键动作）。
 
-        private const double HeightStep = 1000;
-        private const double AngleStep = 15;
+        private const double AngleStep = 5;
 
         private static double lastLoggedHeight = double.NaN;
         private static double lastLoggedAngle = double.NaN;
@@ -88,6 +94,25 @@ namespace SfsAgent
             CheckOrbit();
         }
 
+        /// <summary>当前高度下，多少米才值得记一条。</summary>
+        private static double HeightStepFor(double h)
+        {
+            double a = Math.Abs(h);
+            if (a < 1000)
+            {
+                return 100;
+            }
+            if (a < 10000)
+            {
+                return 500;
+            }
+            if (a < 100000)
+            {
+                return 1000;
+            }
+            return 10000;
+        }
+
         private static void CheckHeight()
         {
             double h = BridgeState.height;
@@ -97,22 +122,22 @@ namespace SfsAgent
             }
             if (double.IsNaN(lastLoggedHeight))
             {
-                lastLoggedHeight = h;
-                BridgeLog.Flight("当前高度 " + M(h));
+                // 首次：记一条当前状态，并把基准对齐到当前档位，
+                // 免得紧接着又报一条「下降到 4.5 km」
+                lastLoggedHeight = Math.Floor(h / HeightStepFor(h)) * HeightStepFor(h);
+                BridgeLog.Flight("当前高度 " + M(h) + "、速度 " + M(BridgeState.speed) + "/s");
                 return;
             }
-            double d = h - lastLoggedHeight;
-            if (Math.Abs(d) < HeightStep)
-            {
-                return;
-            }
-            // 落在哪个 1000 米档位上
-            double bucket = Math.Floor(h / HeightStep) * HeightStep;
+
+            double step = HeightStepFor(h);
+            // 落在哪个档位上（按当前档位取整）
+            double bucket = Math.Floor(h / step) * step;
             if (bucket == lastLoggedHeight)
             {
                 return;
             }
-            bool up = d > 0;
+
+            bool up = bucket > lastLoggedHeight;
             lastLoggedHeight = bucket;
             BridgeLog.Flight((up ? "爬升到 " : "下降到 ") + M(bucket)
                 + "（速度 " + M(BridgeState.speed) + "/s）");
@@ -128,6 +153,7 @@ namespace SfsAgent
             if (double.IsNaN(lastLoggedAngle))
             {
                 lastLoggedAngle = a;
+                BridgeLog.Flight("当前姿态角 " + Deg(a));
                 return;
             }
             if (Math.Abs(a - lastLoggedAngle) < AngleStep)
@@ -332,26 +358,47 @@ namespace SfsAgent
         }
 
         // -- 火箭 -------------------------------------------------------------
+        //
+        // 质量在飞行中**每帧都在变**（烧燃料），零件数也会因分级而变。
+        // 只有零件数变化才值得记（那才是「设计变了」）；
+        // 质量变化记在飞行日志里，这里不掺和。
+
+        private static int lastPartCount = -1;
+        private static string lastBuildMode;
 
         private static void CheckBuild()
         {
-            string key = BridgeBuild.partCount.ToString(CultureInfo.InvariantCulture)
-                + "|" + BridgeBuild.totalMass.ToString("0.#", CultureInfo.InvariantCulture)
-                + "|" + BridgeBuild.mode;
-            if (lastBuildKey == null)
+            string mode = BridgeBuild.mode;
+            int count = BridgeBuild.partCount;
+
+            // 首次记录
+            if (lastPartCount < 0)
             {
-                lastBuildKey = key;
+                lastPartCount = count;
+                lastBuildMode = mode;
                 return;
             }
-            if (key == lastBuildKey)
+
+            // 场景切换时零件数本来就会变，交给 CheckScene 记，这里不重复
+            if (mode != lastBuildMode)
+            {
+                lastBuildMode = mode;
+                lastPartCount = count;
+                return;
+            }
+
+            if (count == lastPartCount)
             {
                 return;
             }
-            lastBuildKey = key;
+
+            int was = lastPartCount;
+            lastPartCount = count;
             changes++;
-            BridgeLog.State("火箭变化："
-                + BridgeBuild.partCount.ToString(CultureInfo.InvariantCulture) + " 个零件、"
-                + BridgeBuild.totalMass.ToString("0.#", CultureInfo.InvariantCulture) + " 吨");
+            BridgeLog.State("火箭零件数变化："
+                + was.ToString(CultureInfo.InvariantCulture) + " → "
+                + count.ToString(CultureInfo.InvariantCulture)
+                + "（" + BridgeBuild.totalMass.ToString("0.#", CultureInfo.InvariantCulture) + " 吨）");
         }
 
         private static string Esc(string s)
