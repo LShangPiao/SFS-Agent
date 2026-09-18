@@ -226,7 +226,82 @@ namespace SfsAgent
                     names.Add(s);
                 }
             }
+
+            // 游戏自己的列表可能是空的 —— GetBlueprintsList 依赖内部缓存，
+            // 没进过 Load 对话框时它返回空，终端用户就会看到「一个蓝图都没有」。
+            // 这种情况直接扫磁盘兜底。
+            if (names.Count == 0)
+            {
+                ScanDiskFallback();
+            }
             names.Sort(StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 直接从磁盘找蓝图目录。
+        ///
+        /// 蓝图规范路径：&lt;游戏目录&gt;/Saving/Blueprints/&lt;名字&gt;/Blueprint.txt
+        /// 这里只列目录名（游戏也只显示名字）。
+        /// </summary>
+        private static void ScanDiskFallback()
+        {
+            try
+            {
+                string root = GameRoot();
+                if (string.IsNullOrEmpty(root))
+                {
+                    listError = "empty (and cannot locate game dir)";
+                    return;
+                }
+                string dir = System.IO.Path.Combine(root, "Saving", "Blueprints");
+                if (!System.IO.Directory.Exists(dir))
+                {
+                    listError = "empty; no such dir: " + dir;
+                    return;
+                }
+                string[] subs = System.IO.Directory.GetDirectories(dir);
+                for (int i = 0; i < subs.Length; i++)
+                {
+                    string name = System.IO.Path.GetFileName(subs[i]);
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        names.Add(name);
+                    }
+                }
+                if (names.Count == 0)
+                {
+                    listError = "empty; dir has no subfolders: " + dir;
+                }
+                else
+                {
+                    listError = "";   // 兜底成功，不算错误
+                }
+            }
+            catch (Exception ex)
+            {
+                listError = "disk scan failed: " + ex.Message;
+            }
+        }
+
+        /// <summary>游戏安装根目录（UnityEngine.Application.dataPath 的上一级）。</summary>
+        private static string GameRoot()
+        {
+            try
+            {
+                Type app = BridgeState.FindType("UnityEngine.Application");
+                object dp = app == null ? null : BridgeState.GetStatic(app, "dataPath");
+                string s = dp == null ? null : Convert.ToString(dp);
+                if (string.IsNullOrEmpty(s))
+                {
+                    return null;
+                }
+                System.IO.DirectoryInfo parent = System.IO.Directory.GetParent(s);
+                return parent == null ? null : parent.FullName;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         public static string ListJson()

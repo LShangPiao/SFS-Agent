@@ -184,7 +184,7 @@ namespace SfsAgent
             }
             else if (path == "/ping")
             {
-                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.5.0\""
+                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.5.1\""
                     + ",\"key_injection\":\"" + (BridgeKeys.Installed ? "on" : "off") + "\""
                     + ",\"key_injection_info\":\"" + Escape(BridgeKeys.InstallInfo) + "\""
                     + "}";

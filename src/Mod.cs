@@ -56,7 +56,7 @@ namespace SfsAgent
 
         public override string ModVersion
         {
-            get { return "v0.5.0"; }
+            get { return "v0.5.1"; }
         }
 
         public override string Description
@@ -439,7 +439,13 @@ namespace SfsAgent
             try
             {
                 BridgeState.Capture();
-                BridgeTelemetry.Capture();
+                // 遥测要遍历全部零件模块，开销不小（终端用户反馈过 FPS 下降）。
+                // 分级 / 燃料 / 目标这些量变化慢，每秒更新几次足够，
+                // 不必每帧都算。
+                if ((telemetryTick++ % 15) == 0)
+                {
+                    BridgeTelemetry.Capture();
+                }
                 BridgeBuild.Capture();
 
                 // 状态变化检测：界面 / 场景 / 世界 / 火箭变了就记一条日志。
@@ -471,5 +477,8 @@ namespace SfsAgent
 
         /// <summary>帧计数器，用于降低非关键任务的频率。</summary>
         private static int frameTick;
+
+        /// <summary>遥测的降频计数（每 15 帧算一次，避免每帧遍历零件模块）。</summary>
+        private static int telemetryTick;
     }
 }
