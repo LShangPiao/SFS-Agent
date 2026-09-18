@@ -1137,6 +1137,9 @@ namespace SfsAgent
                     sb.Append("}");
             }
 
+            // 分级 / 推进 / 导航（由 BridgeTelemetry 采集）
+            sb.Append(BridgeTelemetry.ToJson());
+
             if (lastError.Length > 0)
             {
                 sb.Append(",\"error\":\"").Append(Str(lastError)).Append("\"");

@@ -56,7 +56,7 @@ namespace SfsAgent
 
         public override string ModVersion
         {
-            get { return "v0.4.7"; }
+            get { return "v0.5.0"; }
         }
 
         public override string Description
@@ -439,6 +439,7 @@ namespace SfsAgent
             try
             {
                 BridgeState.Capture();
+                BridgeTelemetry.Capture();
                 BridgeBuild.Capture();
 
                 // 状态变化检测：界面 / 场景 / 世界 / 火箭变了就记一条日志。
