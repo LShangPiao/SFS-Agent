@@ -593,6 +593,46 @@ namespace SfsAgent
         /// 它的地球半径、质量都与现实不同，而且其他天体
         /// （月球、火星…）更是完全不一样。一律从 Planet 对象读。
         /// </summary>
+        /// <summary>
+        /// 游戏内时间（秒）。
+        ///
+        /// 两次采样如果跨越很久，直接对比会得出荒谬结论（比如「速度方向瞬移 80 度」）。
+        /// 把时间戳一起给上层，它就能算出「两次读数之间游戏跑了多久」。
+        /// 取不到时用帧号代替（比例不准但趋势对）。
+        /// </summary>
+        public static double Now()
+        {
+            try
+            {
+                Type pcType = FindType("SFS.World.PlayerController");
+                object pc = pcType == null ? null : GetStatic(pcType, "main");
+                object playerLocal = pc == null ? null : Get(pc, "player");
+                object player = Unwrap(playerLocal);
+                if (player != null)
+                {
+                    object loc = Get(player, "location");
+                    if (loc != null)
+                    {
+                        object t = Get(loc, "time");
+                        if (t == null)
+                        {
+                            object v = Get(loc, "Value");
+                            t = v == null ? null : Get(v, "time");
+                        }
+                        double d = ToDouble(t, double.NaN);
+                        if (!double.IsNaN(d))
+                        {
+                            return d;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return CurrentFrame();
+        }
+
         public static double PlanetRadius()
         {
             if (!double.IsNaN(cachedRadius) && cachedRadius > 0)
@@ -1076,20 +1116,25 @@ namespace SfsAgent
             {
                 sb.Append(",\"orbit_error\":\"").Append(Str(orbitFailReason)).Append("\"");
             }
-            if (hasOrbit)
-            {
-                sb.Append(",\"planet_radius\":").Append(Num(PlanetRadius()));
+            // 采样时间戳：让上层能算出「两次读数之间游戏跑了多久」，
+            // 否则拿两次跨越很久的采样对比会得出荒谬结论。
+            sb.Append(",\"game_time\":").Append(Num(Now()));
+            sb.Append(",\"held_keys\":").Append(BridgeKeys.HeldJson());
+
+            sb.Append(",\"planet_radius\":").Append(Num(PlanetRadius()));
             sb.Append(",\"planet_mu\":").Append(Num(PlanetMu()));
             sb.Append(",\"atmosphere_height\":").Append(Num(AtmosphereHeight()));
             sb.Append(",\"true_anomaly\":").Append(Num(trueAnomaly));
             sb.Append(",\"time_to_peri\":").Append(Num(timeToPeriapsis));
             sb.Append(",\"time_to_apo\":").Append(Num(timeToApoapsis));
-            sb.Append(",\"orbit\":{");
-                sb.Append("\"apoapsis\":").Append(Num(orbitApoapsis));
-                sb.Append(",\"periapsis\":").Append(Num(orbitPeriapsis));
-                sb.Append(",\"eccentricity\":").Append(Num(orbitEcc));
-                sb.Append(",\"period\":").Append(Num(orbitPeriod));
-                sb.Append("}");
+            if (hasOrbit)
+            {
+                sb.Append(",\"orbit\":{");
+                    sb.Append("\"apoapsis\":").Append(Num(orbitApoapsis));
+                    sb.Append(",\"periapsis\":").Append(Num(orbitPeriapsis));
+                    sb.Append(",\"eccentricity\":").Append(Num(orbitEcc));
+                    sb.Append(",\"period\":").Append(Num(orbitPeriod));
+                    sb.Append("}");
             }
 
             if (lastError.Length > 0)

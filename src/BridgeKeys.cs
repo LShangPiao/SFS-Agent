@@ -18,6 +18,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using System.Text;
 using HarmonyLib;
 
 namespace SfsAgent
@@ -30,6 +31,8 @@ namespace SfsAgent
             public long EndTicks;
             public int StartFrame = -1;
             public bool Expired;
+            /// <summary>true = 一直按住，直到显式松开（用于 RCS 这类持续推力）。</summary>
+            public bool HoldForever;
         }
 
         private static readonly List<Injection> Pending = new List<Injection>();
@@ -74,6 +77,133 @@ namespace SfsAgent
             {
                 Pending.Add(inj);
             }
+        }
+
+        /// <summary>
+        /// 按下某个键并**一直按住**，直到调用 Release 或 ReleaseAll。
+        ///
+        /// 为什么需要这个：RCS 平移本质是**持续推力**。
+        /// 之前只有「按下 + 固定时长后自动抬起」，脉冲式按一下在高速下
+        /// 算不出该转多少度 —— 要么转不动，要么转过头。
+        /// 现在可以「按住 3 秒再松」，或者「按住 → 读遥测 → 松」。
+        /// </summary>
+        public static bool Hold(int keyCode)
+        {
+            lock (Gate)
+            {
+                // 已经按着就不重复加
+                for (int i = 0; i < Active.Count; i++)
+                {
+                    if (Active[i].Key == keyCode && !Active[i].Expired)
+                    {
+                        return false;
+                    }
+                }
+                for (int i = 0; i < Pending.Count; i++)
+                {
+                    if (Pending[i].Key == keyCode)
+                    {
+                        return false;
+                    }
+                }
+                Injection inj = new Injection();
+                inj.Key = keyCode;
+                inj.HoldForever = true;
+                inj.EndTicks = long.MaxValue;
+                Pending.Add(inj);
+                return true;
+            }
+        }
+
+        /// <summary>松开某个键。返回 false 表示它本来就没被按住。</summary>
+        public static bool Release(int keyCode)
+        {
+            bool found = false;
+            lock (Gate)
+            {
+                for (int i = Active.Count - 1; i >= 0; i--)
+                {
+                    if (Active[i].Key == keyCode && !Active[i].Expired)
+                    {
+                        Active[i].Expired = true;
+                        Active[i].HoldForever = false;
+                        found = true;
+                    }
+                }
+                for (int i = Pending.Count - 1; i >= 0; i--)
+                {
+                    if (Pending[i].Key == keyCode)
+                    {
+                        Pending.RemoveAt(i);
+                        found = true;
+                    }
+                }
+            }
+            return found;
+        }
+
+        /// <summary>松开全部按住的键。用于「急停」和会话收尾。</summary>
+        public static int ReleaseAll()
+        {
+            int n = 0;
+            lock (Gate)
+            {
+                for (int i = 0; i < Active.Count; i++)
+                {
+                    if (!Active[i].Expired)
+                    {
+                        Active[i].Expired = true;
+                        Active[i].HoldForever = false;
+                        n++;
+                    }
+                }
+                n += Pending.Count;
+                Pending.Clear();
+            }
+            return n;
+        }
+
+        /// <summary>当前按住的键（供 /state 与诊断用）。</summary>
+        public static string HeldJson()
+        {
+            StringBuilder sb = new StringBuilder(64);
+            sb.Append("[");
+            bool first = true;
+            lock (Gate)
+            {
+                for (int i = 0; i < Active.Count; i++)
+                {
+                    if (Active[i].Expired)
+                    {
+                        continue;
+                    }
+                    if (!first)
+                    {
+                        sb.Append(",");
+                    }
+                    first = false;
+                    sb.Append("\"").Append(KeyName(Active[i].Key)).Append("\"");
+                }
+            }
+            sb.Append("]");
+            return sb.ToString();
+        }
+
+        /// <summary>按住不放的键数量。</summary>
+        public static int HeldCount()
+        {
+            int n = 0;
+            lock (Gate)
+            {
+                for (int i = 0; i < Active.Count; i++)
+                {
+                    if (!Active[i].Expired)
+                    {
+                        n++;
+                    }
+                }
+            }
+            return n;
         }
 
         public static bool HasInjection
@@ -158,8 +288,15 @@ namespace SfsAgent
                 long now = DateTime.UtcNow.Ticks;
                 for (int i = Active.Count - 1; i >= 0; i--)
                 {
-                    if (now >= Active[i].EndTicks)
+                    // HoldForever 的键（RCS 长按）不自动过期，等显式 Release
+                    if (!Active[i].HoldForever && now >= Active[i].EndTicks)
                     {
+                        Release(Active[i]);
+                        Active.RemoveAt(i);
+                    }
+                    else if (Active[i].HoldForever && Active[i].Expired)
+                    {
+                        // 被 Release() 标记过，这里清出列表
                         Release(Active[i]);
                         Active.RemoveAt(i);
                     }

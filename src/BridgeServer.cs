@@ -184,7 +184,7 @@ namespace SfsAgent
             }
             else if (path == "/ping")
             {
-                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.4.6\""
+                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.4.7\""
                     + ",\"key_injection\":\"" + (BridgeKeys.Installed ? "on" : "off") + "\""
                     + ",\"key_injection_info\":\"" + Escape(BridgeKeys.InstallInfo) + "\""
                     + "}";
@@ -212,6 +212,19 @@ namespace SfsAgent
             else if (path == "/key" && method == "POST")
             {
                 payload = HandleKey(body, false);
+            }
+            else if (path == "/key_down" && method == "POST")
+            {
+                payload = HandleKeyDown(body);
+            }
+            else if (path == "/key_up" && method == "POST")
+            {
+                payload = HandleKeyUp(body);
+            }
+            else if (path == "/release_all" && method == "POST")
+            {
+                int n = BridgeKeys.ReleaseAll();
+                payload = "{\"ok\":true,\"released\":" + n + "}";
             }
             else if (path == "/key_raw" && method == "POST")
             {
@@ -403,6 +416,8 @@ namespace SfsAgent
                 bool isAction = method == "POST"
                     && (path == "/ui_click" || path == "/click" || path == "/click_raw"
                         || path == "/key" || path == "/key_raw" || path == "/command"
+                        || path == "/key_down" || path == "/key_up"
+                        || path == "/release_all"
                         || path == "/build_place" || path == "/blueprint_load"
                         || path == "/camera" || path == "/exclusive"
                         || path == "/settings" || path == "/scroll");
@@ -676,6 +691,51 @@ namespace SfsAgent
         /// 读写游戏自身的设置（音量、界面缩放、自由视角等）。
         /// POST 需要 key，可带 value（数值）或 text（文本值）。
         /// </summary>
+        /// <summary>
+        /// 按下某个键并一直按住（不自动松开）。
+        /// 用于 RCS 这类持续推力：按住 → 读遥测 → 松开。
+        /// </summary>
+        private static string HandleKeyDown(string body)
+        {
+            int vk = (int)ExtractNumber(body, "vk");
+            if (vk <= 0)
+            {
+                return "{\"ok\":false,\"error\":\"missing vk\"}";
+            }
+            bool added = BridgeKeys.Hold(vk);
+            return "{\"ok\":true,\"action\":\"hold\",\"key\":\""
+                + KeyNameOf(vk) + "\",\"vk\":" + vk
+                + ",\"already_held\":" + (added ? "false" : "true")
+                + ",\"held\":" + BridgeKeys.HeldJson() + "}";
+        }
+
+        /// <summary>松开某个键。本来没按住也返回 ok，并说明情况。</summary>
+        private static string HandleKeyUp(string body)
+        {
+            int vk = (int)ExtractNumber(body, "vk");
+            if (vk <= 0)
+            {
+                return "{\"ok\":false,\"error\":\"missing vk\"}";
+            }
+            bool found = BridgeKeys.Release(vk);
+            return "{\"ok\":true,\"action\":\"release\",\"key\":\""
+                + KeyNameOf(vk) + "\",\"vk\":" + vk
+                + ",\"was_held\":" + (found ? "true" : "false")
+                + ",\"held\":" + BridgeKeys.HeldJson() + "}";
+        }
+
+        private static string KeyNameOf(int vk)
+        {
+            try
+            {
+                return BridgeKeys.KeyName(vk);
+            }
+            catch
+            {
+                return "Key" + vk;
+            }
+        }
+
         private static string HandleSettings(string body)
         {
             string key = ExtractString(body, "key");
