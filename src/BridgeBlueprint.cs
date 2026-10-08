@@ -291,7 +291,7 @@ namespace SfsAgent
         }
 
         /// <summary>内置蓝图在玩家蓝图列表里显示的名字。</summary>
-        public const string BundledName = "SFS-Agent \u793a\u4f8b";
+        public const string BundledName = "示例火箭-基础火箭";
 
         /// <summary>
         /// 把随模组内置的示例蓝图投放到玩家的蓝图目录。
