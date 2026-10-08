@@ -30,6 +30,7 @@ namespace SfsAgent
         private static volatile bool listRequested;
         private static volatile bool listReady;
         private static string listError = "";
+        private static string bundledError = "";
 
         private static string loadName;
         private static volatile bool loadRequested;
@@ -191,6 +192,12 @@ namespace SfsAgent
         {
             names.Clear();
             listError = "";
+
+            // 首次调用时把内置示例蓝图投放到玩家的蓝图目录。
+            // 新用户可能一枚蓝图都没有 —— 那样「造个火箭」就无从下手。
+            // 已存在就跳过，绝不覆盖玩家自己的蓝图。
+            bundledError = EnsureBundled();
+
             Type t = SavingType();
             if (t == null)
             {
@@ -283,6 +290,120 @@ namespace SfsAgent
             }
         }
 
+        /// <summary>内置蓝图在玩家蓝图列表里显示的名字。</summary>
+        public const string BundledName = "SFS-Agent \u793a\u4f8b";
+
+        /// <summary>
+        /// 把随模组内置的示例蓝图投放到玩家的蓝图目录。
+        ///
+        /// 动机：新装的用户可能一枚蓝图都没有，「造个火箭」就无从下手。
+        /// 投放后它会自然出现在 /blueprints 列表里，
+        /// load_sfs_blueprint 也能直接加载 —— 全程走游戏自己的正统路径。
+        ///
+        /// 只在**文件不存在**时写入，绝不覆盖玩家自己的蓝图。
+        /// 返回空串表示成功（含「已存在」的情况）。
+        /// </summary>
+        public static string EnsureBundled()
+        {
+            try
+            {
+                string root = GameDirFromAssembly();
+                if (string.IsNullOrEmpty(root))
+                {
+                    return "cannot locate game dir";
+                }
+
+                string dir = System.IO.Path.Combine(
+                    root, "Saving", "Blueprints", BundledName);
+                string file = System.IO.Path.Combine(dir, "Blueprint.txt");
+
+                if (System.IO.File.Exists(file))
+                {
+                    return "";      // 已经有了
+                }
+
+                string text = ReadEmbeddedTemplate();
+                if (string.IsNullOrEmpty(text))
+                {
+                    return "embedded template missing";
+                }
+
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.WriteAllText(file, text, new UTF8Encoding(false));
+                return "";
+            }
+            catch (Exception ex)
+            {
+                return ex.GetType().Name + ": " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// 从模组 DLL 的位置反推游戏根目录。
+        ///
+        /// DLL 在 &lt;game&gt;/Mods/SFS-Agent/SFS-Agent.dll，往上两级就是 &lt;game&gt;。
+        /// 这条路径不依赖任何 Unity API，因此**任何线程都能安全调用**
+        /// （相比 Application.dataPath 更适合在 HTTP 线程里用）。
+        /// </summary>
+        private static string GameDirFromAssembly()
+        {
+            try
+            {
+                string dll = typeof(BridgeBlueprint).Assembly.Location;
+                string dir = System.IO.Path.GetDirectoryName(dll);
+                if (string.IsNullOrEmpty(dir))
+                {
+                    return null;
+                }
+                System.IO.DirectoryInfo mods = System.IO.Directory.GetParent(dir);
+                if (mods == null)
+                {
+                    return null;
+                }
+                System.IO.DirectoryInfo game = mods.Parent;
+                return game == null ? null : game.FullName;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>读出编译进 DLL 的示例蓝图文本。</summary>
+        private static string ReadEmbeddedTemplate()
+        {
+            try
+            {
+                Assembly asm = typeof(BridgeBlueprint).Assembly;
+                string[] res = asm.GetManifestResourceNames();
+                for (int i = 0; i < res.Length; i++)
+                {
+                    if (!res[i].EndsWith("example.txt", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    System.IO.Stream st = asm.GetManifestResourceStream(res[i]);
+                    if (st == null)
+                    {
+                        continue;
+                    }
+                    using (st)
+                    {
+                        System.IO.StreamReader rd =
+                            new System.IO.StreamReader(st, Encoding.UTF8);
+                        using (rd)
+                        {
+                            return rd.ReadToEnd();
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return null;
+        }
+
         /// <summary>游戏安装根目录（UnityEngine.Application.dataPath 的上一级）。</summary>
         private static string GameRoot()
         {
@@ -309,6 +430,10 @@ namespace SfsAgent
             StringBuilder sb = new StringBuilder(1024);
             sb.Append("{\"ok\":").Append(listError.Length == 0 ? "true" : "false");
             sb.Append(",\"count\":").Append(names.Count);
+            if (bundledError.Length > 0)
+            {
+                sb.Append(",\"bundled_error\":\"").Append(Esc(bundledError)).Append("\"");
+            }
             sb.Append(",\"blueprints\":[");
             for (int i = 0; i < names.Count; i++)
             {
@@ -476,6 +601,13 @@ namespace SfsAgent
                 LoadError = "BuildState.main 为空（不在建造场景）";
                 return;
             }
+
+            // 先清空建造区。
+            // SpawnBlueprint 是**追加**语义 —— 不清空的话每加载一次就多堆一枚，
+            // 实测连续两次加载让零件数从 172 涨到 203。
+            // 游戏自己的 Load 按钮同样会先清。
+            ClearBuild(buildState);
+
             MethodInfo spawn = null;
             MethodInfo[] sm = bsType.GetMethods(
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -500,6 +632,39 @@ namespace SfsAgent
 
             LoadResult = "已加载蓝图「" + name + "」，共 " + count + " 个零件";
             LoadError = "";
+        }
+
+        /// <summary>
+        /// 清空建造区里已有的零件。
+        ///
+        /// 必须做：BuildState.SpawnBlueprint 是追加语义，
+        /// 不先清空的话连续加载会越堆越多（实测 172 -> 203）。
+        /// Clear(bool) 的参数是「是否记入撤销历史」，自动加载传 false。
+        /// </summary>
+        private static void ClearBuild(object buildState)
+        {
+            try
+            {
+                MethodInfo[] ms = buildState.GetType().GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                for (int i = 0; i < ms.Length; i++)
+                {
+                    if (ms[i].Name != "Clear")
+                    {
+                        continue;
+                    }
+                    ParameterInfo[] ps = ms[i].GetParameters();
+                    if (ps.Length == 1 && ps[0].ParameterType == typeof(bool))
+                    {
+                        ms[i].Invoke(buildState, new object[] { false });
+                        return;
+                    }
+                }
+            }
+            catch
+            {
+                // 清空失败不该阻断加载，交给后续 SpawnBlueprint 报错
+            }
         }
 
         /// <summary>

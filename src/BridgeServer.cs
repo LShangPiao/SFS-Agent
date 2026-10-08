@@ -184,7 +184,7 @@ namespace SfsAgent
             }
             else if (path == "/ping")
             {
-                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.5.1\""
+                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.6.0\""
                     + ",\"key_injection\":\"" + (BridgeKeys.Installed ? "on" : "off") + "\""
                     + ",\"key_injection_info\":\"" + Escape(BridgeKeys.InstallInfo) + "\""
                     + "}";
@@ -985,12 +985,103 @@ namespace SfsAgent
             {
                 return null;
             }
-            int end = json.IndexOf('"', start + 1);
-            if (end < 0)
+            return ReadJsonString(json, start + 1);
+        }
+
+        /// <summary>
+        /// 从 json[from]（第一个内容字符，不含开引号）读出一个 JSON 字符串，
+        /// 正确处理转义序列。
+        ///
+        /// **为什么必须处理 \uXXXX**：Python 的 json.dumps —— 以及 httpx 的
+        /// json= 参数 —— 默认 ensure_ascii=True，中文会被写成 \uXXXX 形式。
+        /// 这里以前只是照抄原文，于是「示例」变成了字面的 "\u793a\u4f8b"，
+        /// 结果**所有中文蓝图名都加载不了**（会回退到 DefaultFolder）。
+        /// </summary>
+        private static string ReadJsonString(string json, int from)
+        {
+            StringBuilder sb = new StringBuilder(json.Length - from);
+            int i = from;
+            while (i < json.Length)
             {
-                return null;
+                char c = json[i];
+                if (c == '"')
+                {
+                    break;
+                }
+                if (c != '\\')
+                {
+                    sb.Append(c);
+                    i++;
+                    continue;
+                }
+
+                i++;
+                if (i >= json.Length)
+                {
+                    break;
+                }
+                char e = json[i];
+                switch (e)
+                {
+                    case 'n': sb.Append('\n'); i++; break;
+                    case 'r': sb.Append('\r'); i++; break;
+                    case 't': sb.Append('\t'); i++; break;
+                    case 'b': sb.Append('\b'); i++; break;
+                    case 'f': sb.Append('\f'); i++; break;
+                    case '"': sb.Append('"'); i++; break;
+                    case '\\': sb.Append('\\'); i++; break;
+                    case '/': sb.Append('/'); i++; break;
+                    case 'u':
+                        {
+                            if (i + 4 < json.Length)
+                            {
+                                int code = 0;
+                                bool ok = true;
+                                for (int k = 1; k <= 4; k++)
+                                {
+                                    int hv = HexVal(json[i + k]);
+                                    if (hv < 0)
+                                    {
+                                        ok = false;
+                                        break;
+                                    }
+                                    code = (code << 4) | hv;
+                                }
+                                if (ok)
+                                {
+                                    sb.Append((char)code);
+                                    i += 5;
+                                    break;
+                                }
+                            }
+                            sb.Append('\\').Append('u');
+                            i++;
+                            break;
+                        }
+                    default:
+                        sb.Append(e);
+                        i++;
+                        break;
+                }
             }
-            return json.Substring(start + 1, end - start - 1);
+            return sb.ToString();
+        }
+
+        private static int HexVal(char c)
+        {
+            if (c >= '0' && c <= '9')
+            {
+                return c - '0';
+            }
+            if (c >= 'a' && c <= 'f')
+            {
+                return c - 'a' + 10;
+            }
+            if (c >= 'A' && c <= 'F')
+            {
+                return c - 'A' + 10;
+            }
+            return -1;
         }
 
         private static double ExtractNumber(string json, string key)

@@ -56,7 +56,7 @@ namespace SfsAgent
 
         public override string ModVersion
         {
-            get { return "v0.5.1"; }
+            get { return "v0.6.0"; }
         }
 
         public override string Description

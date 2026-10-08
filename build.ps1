@@ -56,6 +56,18 @@ $argList = @(
   "/reference:System.Core.dll"
 )
 foreach ($r in $refs) { $argList += "/reference:$r" }
+
+# 把内置示例蓝图嵌进 DLL。
+# 新装的用户可能一枚蓝图都没有，那样「造个火箭」无从下手；
+# 模组会在首次列出蓝图时自动往 Saving/Blueprints/ 投一份。
+$Template = Join-Path $SrcDir "templates\example.txt"
+if (Test-Path $Template) {
+    $argList += "/resource:$Template,example.txt"
+    Write-Output "  嵌入模板: $Template"
+} else {
+    Write-Output "  警告：未找到内置模板 $Template"
+}
+
 $argList += $srcFiles
 
 Write-Output ""
