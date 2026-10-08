@@ -193,10 +193,10 @@ namespace SfsAgent
             names.Clear();
             listError = "";
 
-            // 首次调用时把内置示例蓝图投放到玩家的蓝图目录。
-            // 新用户可能一枚蓝图都没有 —— 那样「造个火箭」就无从下手。
-            // 已存在就跳过，绝不覆盖玩家自己的蓝图。
-            bundledError = EnsureBundled();
+            // 注意：这里**不再**往玩家的蓝图目录投放任何东西。
+            // 预设改为放在模组自己的 presets/ 下，由 BridgePreset 直接加载，
+            // 免得污染玩家的蓝图列表。
+            bundledError = CleanupOldBundled();
 
             Type t = SavingType();
             if (t == null)
@@ -402,6 +402,145 @@ namespace SfsAgent
             {
             }
             return null;
+        }
+
+        /// <summary>
+        /// 把已解析好的 Blueprint 对象生成到建造区。返回空串表示成功。
+        ///
+        /// 预设加载也走这里 —— 保证「先清空再生成」的语义和蓝图加载一致。
+        /// SpawnBlueprint 是追加语义，不先清空会越堆越多（实测 172 -> 203）。
+        /// </summary>
+        public static string SpawnIntoBuild(object blueprint, string name)
+        {
+            try
+            {
+                Type bsType = BridgeState.FindType("SFS.Builds.BuildState");
+                object buildState = BridgeState.GetStatic(bsType, "main");
+                if (buildState == null)
+                {
+                    return "BuildState.main 为空（不在建造场景）";
+                }
+
+                ClearBuild(buildState);
+
+                MethodInfo spawn = null;
+                MethodInfo[] sm = bsType.GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                for (int i = 0; i < sm.Length; i++)
+                {
+                    if (sm[i].Name == "SpawnBlueprint" && sm[i].GetParameters().Length == 3)
+                    {
+                        spawn = sm[i];
+                        break;
+                    }
+                }
+                if (spawn == null)
+                {
+                    return "BuildState.SpawnBlueprint not found";
+                }
+
+                object spawned = spawn.Invoke(buildState, new object[] { blueprint, false, null });
+                Array arr = spawned as Array;
+                int count = arr == null ? 0 : arr.Length;
+                CenterCameraOnParts(buildState, arr);
+
+                LoadResult = "已加载「" + name + "」，共 " + count + " 个零件";
+                LoadError = "";
+                return "";
+            }
+            catch (Exception ex)
+            {
+                return ex.GetType().Name + ": " + ex.Message;
+            }
+        }
+
+        /// <summary>供 BridgePreset 复用（MakeLogger 本身是私有的）。</summary>
+        public static object MakeLoggerPublic()
+        {
+            return MakeLogger();
+        }
+
+        /// <summary>
+        /// 删掉早期版本误投放到玩家蓝图目录里的那份预设。
+        ///
+        /// v0.6.0 / v0.6.1 会把内置蓝图写进 Saving/Blueprints/，
+        /// 现在改成模组自己的 presets/ 了，旧的留着只会让玩家困惑。
+        /// 只在**内容与内嵌预设完全一致**时才删 —— 玩家改过就不动。
+        /// </summary>
+        private static string CleanupOldBundled()
+        {
+            try
+            {
+                string root = GameDirFromAssembly();
+                if (string.IsNullOrEmpty(root))
+                {
+                    return "";
+                }
+                string[] legacy = new string[]
+                {
+                    "SFS-Agent 示例",
+                    "示例火箭-基础火箭",
+                };
+                for (int i = 0; i < legacy.Length; i++)
+                {
+                    string dir = System.IO.Path.Combine(root, "Saving", "Blueprints", legacy[i]);
+                    string file = System.IO.Path.Combine(dir, "Blueprint.txt");
+                    if (!System.IO.File.Exists(file))
+                    {
+                        continue;
+                    }
+                    // 与任何一枚内嵌预设内容一致才认为是模组放的
+                    bool ours = false;
+                    try
+                    {
+                        string text = System.IO.File.ReadAllText(file, Encoding.UTF8);
+                        string[] res = typeof(BridgeBlueprint).Assembly.GetManifestResourceNames();
+                        for (int r = 0; r < res.Length; r++)
+                        {
+                            System.IO.Stream st =
+                                typeof(BridgeBlueprint).Assembly.GetManifestResourceStream(res[r]);
+                            if (st == null)
+                            {
+                                continue;
+                            }
+                            using (st)
+                            {
+                                System.IO.StreamReader rd =
+                                    new System.IO.StreamReader(st, Encoding.UTF8);
+                                using (rd)
+                                {
+                                    if (rd.ReadToEnd() == text)
+                                    {
+                                        ours = true;
+                                    }
+                                }
+                            }
+                            if (ours)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                    }
+                    if (ours)
+                    {
+                        try
+                        {
+                            System.IO.Directory.Delete(dir, true);
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+                return "";
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         /// <summary>游戏安装根目录（UnityEngine.Application.dataPath 的上一级）。</summary>

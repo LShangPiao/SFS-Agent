@@ -56,7 +56,7 @@ namespace SfsAgent
 
         public override string ModVersion
         {
-            get { return "v0.6.1"; }
+            get { return "v0.6.2"; }
         }
 
         public override string Description
@@ -460,6 +460,7 @@ namespace SfsAgent
                 BridgePointer.Tick();
                 BridgeParts.Tick();
                 BridgeBlueprint.Tick();
+                BridgePreset.Tick();
                 BridgeCamera.Tick();
                 BridgeSettings.Tick();
                 BridgeOverlay.Tick();

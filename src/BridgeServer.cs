@@ -184,7 +184,7 @@ namespace SfsAgent
             }
             else if (path == "/ping")
             {
-                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.6.1\""
+                payload = "{\"ok\":true,\"mod\":\"sfs_agent\",\"version\":\"0.6.2\""
                     + ",\"key_injection\":\"" + (BridgeKeys.Installed ? "on" : "off") + "\""
                     + ",\"key_injection_info\":\"" + Escape(BridgeKeys.InstallInfo) + "\""
                     + "}";
@@ -331,6 +331,14 @@ namespace SfsAgent
             else if (path == "/blueprints")
             {
                 payload = HandleBlueprints();
+            }
+            else if (path == "/presets")
+            {
+                payload = BridgePreset.ListJson();
+            }
+            else if (path == "/preset_load" && method == "POST")
+            {
+                payload = HandlePresetLoad(body);
             }
             else if (path == "/blueprint_load" && method == "POST")
             {
@@ -784,6 +792,69 @@ namespace SfsAgent
                 hasRot ? rot : double.NaN);
             System.Threading.Thread.Sleep(200);
             return BridgeCamera.ResultJson();
+        }
+
+        /// <summary>
+        /// 加载模组自带的预设蓝图到建造页面。
+        ///
+        /// 预设不放进玩家的蓝图目录，而是从模组自己的 presets/ 读，
+        /// 所以它**不会**出现在游戏或 /blueprints 的列表里。
+        /// </summary>
+        private static string HandlePresetLoad(string body)
+        {
+            string name = ExtractString(body, "name");
+            if (string.IsNullOrEmpty(name))
+            {
+                return "{\"ok\":false,\"error\":\"missing name\"}";
+            }
+            // SpawnBlueprint 会创建 Unity Mesh，**必须在主线程**执行，
+            // 在 HTTP 线程直接调用会让游戏崩溃（实测崩过）。
+            // 所以这里只入队，帧循环里的 BridgePreset.Tick 干实事。
+            BridgePreset.EnqueueLoad(name);
+            for (int i = 0; i < 400 && BridgePreset.Busy; i++)
+            {
+                System.Threading.Thread.Sleep(25);
+            }
+            if (BridgePreset.Busy)
+            {
+                return "{\"ok\":false,\"error\":\"\u7b49\u5f85\u4e3b\u7ebf\u7a0b\u8d85\u65f6\"}";
+            }
+            return BridgePreset.ResultJson();
+        }
+
+        /// <summary>极简 JSON 字符串转义（中文按 UTF-8 原样输出即可）。</summary>
+        private static string EscJson(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder(s.Length + 8);
+            for (int i = 0; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c == '"' || c == '\\')
+                {
+                    sb.Append('\\').Append(c);
+                }
+                else if (c == '\n')
+                {
+                    sb.Append("\\n");
+                }
+                else if (c == '\r')
+                {
+                    sb.Append("\\r");
+                }
+                else if (c < 32)
+                {
+                    sb.Append(' ');
+                }
+                else
+                {
+                    sb.Append(c);
+                }
+            }
+            return sb.ToString();
         }
 
         /// <summary>列出游戏存档里的蓝图（走 Blueprint_Saving.GetBlueprintsList）。</summary>
