@@ -50,6 +50,12 @@ namespace SfsAgent
 
         public static string lastError = "";
 
+        /// <summary>分级采集的诊断信息（只在 count 为 0 时才有意义）。</summary>
+        public static string stagesDebug = "";
+
+        /// <summary>引擎/燃料采集的诊断信息。</summary>
+        public static string enginesDebug = "";
+
         // -- 入口 -------------------------------------------------------------
 
         /// <summary>每帧在 Capture() 之后调用。全部在主线程。</summary>
@@ -111,30 +117,70 @@ namespace SfsAgent
 
         private static void CaptureStages(object rocket)
         {
+            stageCount = 0;
+            activeStageIndex = -1;
+            currentStageParts = 0;
+            stageSummary = "";
+            stagesDebug = "";
+
             object staging = BridgeState.Get(rocket, "staging");
             if (staging == null)
             {
+                staging = BridgeState.Get(rocket, "Staging");
+            }
+            if (staging == null)
+            {
+                stagesDebug = "staging=null rocket=" + rocket.GetType().Name;
                 return;
             }
 
             object listObj = BridgeState.Get(staging, "stages");
-            IList stages = listObj as IList;
-            if (stages == null)
+            if (listObj == null)
             {
+                listObj = BridgeState.Get(staging, "Stages");
+            }
+            if (listObj == null)
+            {
+                stagesDebug = "stages=null staging=" + staging.GetType().Name;
                 return;
             }
 
-            stageCount = stages.Count;
+            List<object> stageList = new List<object>();
+            IList stages = listObj as IList;
+            if (stages != null)
+            {
+                for (int i = 0; i < stages.Count; i++)
+                {
+                    stageList.Add(stages[i]);
+                }
+            }
+            else
+            {
+                IEnumerable seq = listObj as IEnumerable;
+                if (seq == null)
+                {
+                    stagesDebug = "stages=" + listObj.GetType().Name + " not-enumerable";
+                    return;
+                }
+                foreach (object o in seq)
+                {
+                    stageList.Add(o);
+                }
+            }
+
+            stageCount = stageList.Count;
+            stagesDebug = "stages=" + stageCount + " src=" + listObj.GetType().Name;
 
             // 找「当前级」：还没用过的第一个（parts 最多且未标识为已用）。
             // SFS 的分级是从最后往上点，这里只给出可读的概览，
             // 具体哪一级该点火由 Enter 键交给游戏自己判断。
             StringBuilder sb = new StringBuilder(96);
             int bestIdx = -1;
-            int bestParts = -1;
-            for (int i = 0; i < stages.Count; i++)
+            int bestId = int.MaxValue;
+            int bestParts = 0;
+            for (int i = 0; i < stageList.Count; i++)
             {
-                object st = stages[i];
+                object st = stageList[i];
                 if (st == null)
                 {
                     continue;
@@ -143,6 +189,13 @@ namespace SfsAgent
                 if (pc == null)
                 {
                     pc = BridgeState.Get(st, "parts");
+                }
+                if (pc != null && pc.GetType() != typeof(int) && pc.GetType() != typeof(float)
+                    && pc.GetType() != typeof(double) && pc.GetType() != typeof(long))
+                {
+                    // parts 是 List<Part>，取它的 Count
+                    object cnt = BridgeState.Get(pc, "Count");
+                    pc = cnt;
                 }
                 int n = (int)BridgeState.ToDouble(pc, 0);
 
@@ -155,16 +208,18 @@ namespace SfsAgent
                 }
                 sb.Append("#").Append(id).Append("(").Append(n).Append("件)");
 
-                // PartCount 最大的通常是还没分离的主级
-                if (n > bestParts)
+                // 当前级 = 还有零件、且 stageId 最小的那一级
+                // （SFS 从 stageId 小的往上依次点火，点过的级会被分离成空级）
+                if (n > 0 && id < bestId)
                 {
+                    bestId = id;
                     bestParts = n;
                     bestIdx = i;
                 }
             }
             stageSummary = sb.ToString();
 
-            if (bestIdx >= 0 && stages.Count > 0)
+            if (bestIdx >= 0)
             {
                 activeStageIndex = bestIdx;
                 currentStageParts = bestParts;
@@ -176,10 +231,14 @@ namespace SfsAgent
         private static void CaptureEngines(object rocket)
         {
             totalThrust = 0;
+            twr = 0;
             activeEngines = 0;
             totalEngines = 0;
             fuelPercent = double.NaN;
             rcsFuelPercent = double.NaN;
+            enginesDebug = "";
+            int engineDebugSeen = 0;
+            int boosterDebugSeen = 0;
 
             object holder = BridgeState.Get(rocket, "partHolder");
             if (holder == null)
@@ -196,6 +255,12 @@ namespace SfsAgent
             Type engineType = BridgeState.FindType("SFS.Parts.Modules.EngineModule");
             Type boosterType = BridgeState.FindType("SFS.Parts.Modules.BoosterModule");
             Type rcsType = BridgeState.FindType("SFS.Parts.Modules.RcsModule");
+
+            // 同一个模块可能在 modules 字典里挂在多个 key 下（类型 + 基类/接口），
+            // 直接遍历会把一台发动机数成两三台（实测 24 件小火箭报 30 台、
+            // 182 件大火箭报 150 台）。这里按对象引用去重。
+            HashSet<object> seen = new HashSet<object>(ReferenceComparer.Instance);
+            int rawEngines = 0;
 
             double boosterFuelSum = 0;
             int boosterFuelCount = 0;
@@ -227,48 +292,64 @@ namespace SfsAgent
                     {
                         continue;
                     }
+                    if (!seen.Add(mod))
+                    {
+                        continue;
+                    }
 
                     if (engineType != null && engineType.IsInstanceOfType(mod))
                     {
+                        rawEngines++;
                         totalEngines++;
                         object on = BridgeState.Get(mod, "engineOn");
-                        bool isOn = BridgeState.ToDouble(BridgeState.Unwrap(on), 0) > 0.5;
-                        if (isOn)
+                        bool? isOn = ReadBool(on);
+                        if (isOn == true)
                         {
                             activeEngines++;
                         }
-                        // thrust 是 Composed_Float，取值要 unwrap
+                        // thrust 是 Composed_Float，取它的 Value / GetResult
                         object th = BridgeState.Get(mod, "thrust");
-                        double t = BridgeState.ToDouble(BridgeState.Unwrap(th), 0);
-                        if (isOn)
+                        double t = ReadNumber(th, 0);
+                        if (isOn == true)
                         {
                             totalThrust += t;
                         }
                         if (!ispKnown)
                         {
-                            double ispv = BridgeState.ToDouble(
-                                BridgeState.Unwrap(BridgeState.Get(mod, "ISP")), double.NaN);
+                            double ispv = ReadNumber(BridgeState.Get(mod, "ISP"), double.NaN);
                             if (!double.IsNaN(ispv) && ispv > 0)
                             {
                                 isp = ispv;
                                 ispKnown = true;
                             }
                         }
+                        if (engineDebugSeen < 1)
+                        {
+                            engineDebugSeen++;
+                            enginesDebug = "on=" + Describe(on) + " isOn=" + (isOn.HasValue ? isOn.Value.ToString() : "?")
+                                + " thrust=" + Describe(th) + " t=" + t.ToString("0.###", CultureInfo.InvariantCulture);
+                        }
                     }
                     else if (boosterType != null && boosterType.IsInstanceOfType(mod))
                     {
                         object fp = BridgeState.Get(mod, "fuelPercent");
-                        double f = BridgeState.ToDouble(BridgeState.Unwrap(fp), double.NaN);
+                        double f = ReadNumber(fp, double.NaN);
                         if (!double.IsNaN(f))
                         {
                             boosterFuelSum += f;
                             boosterFuelCount++;
                         }
+                        if (boosterDebugSeen < 1)
+                        {
+                            boosterDebugSeen++;
+                            enginesDebug += (enginesDebug.Length > 0 ? " | " : "")
+                                + "fuel=" + Describe(fp) + " f=" + f.ToString("0.###", CultureInfo.InvariantCulture);
+                        }
                     }
                     else if (rcsType != null && rcsType.IsInstanceOfType(mod))
                     {
                         object fp = BridgeState.Get(mod, "fuelPercent");
-                        double f = BridgeState.ToDouble(BridgeState.Unwrap(fp), double.NaN);
+                        double f = ReadNumber(fp, double.NaN);
                         if (!double.IsNaN(f))
                         {
                             rcsFuelSum += f;
@@ -282,12 +363,28 @@ namespace SfsAgent
             {
                 fuelPercent = boosterFuelSum / boosterFuelCount;
             }
+            // 液体燃料：SFS 把资源分组挂在 Rocket.resources（SFS.World.Resources）上，
+            // 每组的 ResourcePercent 就是「这一组还剩百分之几」。
+            // BoosterModule 只覆盖固体助推器，液体燃料罐是 ResourceModule，
+            // 所以不补这段的话 fuel_percent 永远是 null。
+            if (boosterFuelCount == 0)
+            {
+                double liquid = ReadLiquidFuel(rocket);
+                if (!double.IsNaN(liquid))
+                {
+                    fuelPercent = liquid;
+                }
+            }
             if (rcsFuelCount > 0)
             {
                 rcsFuelPercent = rcsFuelSum / rcsFuelCount;
             }
 
             // 推重比 = 推力 / (质量 × 当地重力)
+            if (enginesDebug.Length > 0)
+            {
+                enginesDebug += " | total=" + totalEngines + " raw=" + rawEngines;
+            }
             if (totalThrust > 0 && BridgeState.mass > 0)
             {
                 double g = LocalGravity();
@@ -295,6 +392,62 @@ namespace SfsAgent
                 {
                     twr = totalThrust / (BridgeState.mass * g);
                 }
+            }
+        }
+
+        private static double ReadLiquidFuel(object rocket)
+        {
+            try
+            {
+                object res = BridgeState.Get(rocket, "resources");
+                if (res == null)
+                {
+                    return double.NaN;
+                }
+                object groupsObj = BridgeState.Get(res, "globalGroups");
+                Array groups = groupsObj as Array;
+                if (groups == null || groups.Length == 0)
+                {
+                    return double.NaN;
+                }
+                double sum = 0;
+                int n = 0;
+                for (int i = 0; i < groups.Length; i++)
+                {
+                    object g = groups.GetValue(i);
+                    if (g == null)
+                    {
+                        continue;
+                    }
+                    double p = ReadNumber(BridgeState.Get(g, "resourcePercent"), double.NaN);
+                    if (double.IsNaN(p))
+                    {
+                        continue;
+                    }
+                    sum += p;
+                    n++;
+                }
+                return n > 0 ? sum / n : double.NaN;
+            }
+            catch
+            {
+                return double.NaN;
+            }
+        }
+
+        /// <summary>只按对象引用比较，用来给 modules 字典里的重复项去重。</summary>
+        private sealed class ReferenceComparer : IEqualityComparer<object>
+        {
+            public static readonly ReferenceComparer Instance = new ReferenceComparer();
+
+            public new bool Equals(object a, object b)
+            {
+                return object.ReferenceEquals(a, b);
+            }
+
+            public int GetHashCode(object o)
+            {
+                return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(o);
             }
         }
 
@@ -455,6 +608,112 @@ namespace SfsAgent
             return null;
         }
 
+        // -- 反射取值（兼容各种包装器） ---------------------------------------
+
+        /// <summary>读 Bool_Reference / bool / 数字包装器得到布尔值。</summary>
+        private static bool? ReadBool(object value)
+        {
+            object raw = ReadRaw(value);
+            if (raw == null)
+            {
+                return null;
+            }
+            if (raw is bool)
+            {
+                return (bool)raw;
+            }
+            double d = BridgeState.ToDouble(raw, double.NaN);
+            if (double.IsNaN(d))
+            {
+                return null;
+            }
+            return d > 0.5;
+        }
+
+        /// <summary>读 Float_Reference / Composed_Float / 数字包装器得到数值。</summary>
+        private static double ReadNumber(object value, double fallback)
+        {
+            object raw = ReadRaw(value);
+            if (raw == null)
+            {
+                return fallback;
+            }
+            return BridgeState.ToDouble(raw, fallback);
+        }
+
+        /// <summary>把 SFS 的 *_Reference / Composed_* 包装拆成原始值。</summary>
+        private static object ReadRaw(object value)
+        {
+            if (value == null)
+            {
+                return null;
+            }
+            object current = value;
+            for (int depth = 0; depth < 4; depth++)
+            {
+                if (current == null)
+                {
+                    return null;
+                }
+                Type t = current.GetType();
+                if (t.IsPrimitive || current is string || current is decimal)
+                {
+                    return current;
+                }
+
+                object next = BridgeState.Get(current, "Value");
+                if (next == null)
+                {
+                    next = BridgeState.Get(current, "value");
+                }
+                if (next == null)
+                {
+                    next = BridgeState.Get(current, "localValue");
+                }
+                if (next == null)
+                {
+                    // Composed_Float 没有 Value，只有 GetResult(bool)
+                    MethodInfo gr = t.GetMethod("GetResult", new Type[] { typeof(bool) });
+                    if (gr != null && gr.ReturnType != typeof(void))
+                    {
+                        try
+                        {
+                            next = gr.Invoke(current, new object[] { true });
+                        }
+                        catch
+                        {
+                        }
+                        if (next == null)
+                        {
+                            try
+                            {
+                                next = gr.Invoke(current, new object[] { false });
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    }
+                }
+
+                if (next == null || ReferenceEquals(next, current))
+                {
+                    return null;
+                }
+                if (next.GetType() == t)
+                {
+                    return null;
+                }
+                current = next;
+            }
+            return current;
+        }
+
+        private static string Describe(object value)
+        {
+            return value == null ? "null" : value.GetType().Name;
+        }
+
         // -- JSON -------------------------------------------------------------
 
         public static string ToJson()
@@ -491,6 +750,16 @@ namespace SfsAgent
             if (lastError.Length > 0)
             {
                 sb.Append(",\"telemetry_error\":\"").Append(Esc(lastError)).Append("\"");
+            }
+
+            if (stagesDebug.Length > 0)
+            {
+                sb.Append(",\"stages_debug\":\"").Append(Esc(stagesDebug)).Append("\"");
+            }
+
+            if (enginesDebug.Length > 0)
+            {
+                sb.Append(",\"engines_debug\":\"").Append(Esc(enginesDebug)).Append("\"");
             }
             return sb.ToString();
         }

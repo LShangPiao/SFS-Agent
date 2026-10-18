@@ -767,10 +767,108 @@ namespace SfsAgent
             object spawned = spawn.Invoke(buildState, new object[] { blueprint, false, null });
             Array arr = spawned as Array;
             int count = arr == null ? 0 : arr.Length;
+            ApplyStages(blueprint, arr);
             CenterCameraOnParts(buildState, arr);
 
             LoadResult = "已加载蓝图「" + name + "」，共 " + count + " 个零件";
             LoadError = "";
+        }
+
+        /// <summary>
+        /// 把蓝图里的分级数据（StageSave[]）重新应用给建造场景的 Staging。
+        ///
+        /// 为什么必须做：SpawnBlueprint 只把零件摆上去，**不会**恢复分级归属。
+        /// 没有分级，游戏就不知道哪台引擎属于哪一级 —— 发射后 HUD 推力恒为
+        /// 0t、按空格点火毫无反应、右侧分级栏整片空白，遥测里 stages.count 也
+        /// 是 0。实测：`/blueprint_load 蓝星1号`（182 件 / 3510 t）与
+        /// `/preset_load 三级火箭`（24 件）都复现。
+        ///
+        /// Staging.Load(StageSave[], Part[], bool) 是游戏自己读存档走的路，
+        /// 失败再退到 CreateStages(StageSave[], Part[])。全程吞异常 ——
+        /// 分级恢复失败也不该让整个加载流程报错。
+        /// </summary>
+        private static void ApplyStages(object blueprint, Array parts)
+        {
+            try
+            {
+                if (blueprint == null || parts == null || parts.Length == 0)
+                {
+                    return;
+                }
+                Type partType = BridgeState.FindType("SFS.Parts.Part");
+                if (partType == null || parts.GetType().GetElementType() != partType)
+                {
+                    return;
+                }
+                Array stageSaves = BridgeState.Get(blueprint, "stages") as Array;
+                if (stageSaves == null || stageSaves.Length == 0)
+                {
+                    return;
+                }
+
+                object staging = BuildStaging();
+                if (staging == null)
+                {
+                    return;
+                }
+
+                MethodInfo[] ms = staging.GetType().GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                MethodInfo load = null;
+                MethodInfo create = null;
+                for (int i = 0; i < ms.Length; i++)
+                {
+                    ParameterInfo[] ps = ms[i].GetParameters();
+                    if (ms[i].Name == "Load" && ps.Length == 3)
+                    {
+                        load = ms[i];
+                    }
+                    else if (ms[i].Name == "CreateStages" && ps.Length == 2)
+                    {
+                        create = ms[i];
+                    }
+                }
+                if (load != null)
+                {
+                    load.Invoke(staging, new object[] { stageSaves, parts, false });
+                }
+                else if (create != null)
+                {
+                    create.Invoke(staging, new object[] { stageSaves, parts });
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>建造场景的 Staging（StagingDrawer.main.staging 是 Staging_Local，要 Unwrap）。</summary>
+        private static object BuildStaging()
+        {
+            try
+            {
+                Type drawerType = BridgeState.FindType("SFS.World.StagingDrawer");
+                if (drawerType == null)
+                {
+                    return null;
+                }
+                object drawer = BridgeState.GetStatic(drawerType, "main");
+                if (drawer == null)
+                {
+                    return null;
+                }
+                object local = BridgeState.Get(drawer, "staging");
+                if (local == null)
+                {
+                    return null;
+                }
+                object staging = BridgeState.Unwrap(local);
+                return staging != null ? staging : local;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>

@@ -258,27 +258,114 @@ namespace SfsAgent
                     partNameCounts.Add(pairs[i].Value);
                 }
 
-                // 分级数：优先读飞行中火箭的 staging
-                stageCount = 0;
+                // 分级数：飞行场景读火箭的 staging，建造场景读 StagingDrawer 的 staging。
+                //
+                // 旧实现写成 `if (sn is Array) ((Array)sn).Length`，而
+                // Staging.stages 是 **List<Stage>**，永远匹配不上 Array，
+                // 于是 stage_count 恒为 0（猫娘据此判断「读不到分级」）。
+                // 现在统一交给 CountStages 按 ICollection/IList/IEnumerable 依次兜底。
+                object stagingObj = null;
                 if (flying)
                 {
                     object player = BridgeState.Unwrap(
                         BridgeState.Get(pc, "player"));
-                    object staging = BridgeState.Get(player, "staging");
-                    if (staging != null)
-                    {
-                        object sn = BridgeState.Get(staging, "stages");
-                        if (sn is Array)
-                        {
-                            stageCount = ((Array)sn).Length;
-                        }
-                    }
+                    stagingObj = BridgeState.Get(player, "staging");
                 }
+                else
+                {
+                    stagingObj = FindBuildStaging();
+                }
+                stageCount = CountStages(stagingObj);
             }
             catch (Exception ex)
             {
                 lastError = ex.Message;
             }
+        }
+
+        /// <summary>
+        /// 建造场景里的 Staging 对象。
+        ///
+        /// SFS 的分级数据只有两个来源：飞行中 Rocket.staging，或建造界面
+        /// StagingDrawer.main.staging（类型是 Staging_Local，要 Unwrap 出 Staging）。
+        /// 建造场景没有 Rocket，所以只能走后者。
+        /// </summary>
+        private static object FindBuildStaging()
+        {
+            try
+            {
+                Type drawerType = BridgeState.FindType("SFS.World.StagingDrawer");
+                if (drawerType == null)
+                {
+                    return null;
+                }
+                object drawer = BridgeState.GetStatic(drawerType, "main");
+                if (drawer == null)
+                {
+                    return null;
+                }
+                object local = BridgeState.Get(drawer, "staging");
+                if (local == null)
+                {
+                    return null;
+                }
+                object staging = BridgeState.Unwrap(local);
+                return staging != null ? staging : local;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 数分级数量。stages 是 List&lt;Stage&gt;，不是数组，
+        /// 所以先 ICollection、再 IList、最后 IEnumerable 兜底。
+        /// </summary>
+        private static int CountStages(object staging)
+        {
+            if (staging == null)
+            {
+                return 0;
+            }
+            object stages;
+            try
+            {
+                stages = BridgeState.Get(staging, "stages");
+            }
+            catch
+            {
+                return 0;
+            }
+            if (stages == null)
+            {
+                return 0;
+            }
+            System.Collections.ICollection col = stages as System.Collections.ICollection;
+            if (col != null)
+            {
+                return col.Count;
+            }
+            System.Collections.IList list = stages as System.Collections.IList;
+            if (list != null)
+            {
+                return list.Count;
+            }
+            System.Collections.IEnumerable en = stages as System.Collections.IEnumerable;
+            if (en != null)
+            {
+                int n = 0;
+                foreach (object o in en)
+                {
+                    n++;
+                    if (n > 1000)
+                    {
+                        break;
+                    }
+                }
+                return n;
+            }
+            return 0;
         }
 
         private static string JsonEscape(string s)

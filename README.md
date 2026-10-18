@@ -142,7 +142,7 @@ pwsh -File build.ps1
 | POST | `/blueprint_load` | 按名字加载整枚蓝图到建造场景（造火箭最可靠的路径） |
 | GET | `/ui` | 当前界面可点击元素清单 |
 | GET | `/screenshot` | 抓取画面，返回 PNG |
-| POST | `/command` | 飞行指令：`set_throttle` / `throttle_on` / `throttle_off` / `stage` / `staging_program` / `rcs_on` / `rcs_off` / `rcs_toggle` |
+| POST | `/command` | 飞行指令：`set_throttle` / `throttle_on` / `throttle_off` / `ignite` / `stage` / `staging_program` / `rcs_on` / `rcs_off` / `rcs_toggle`（`ignite` / `stage` / `staging_program` 都注入**回车**——SFS 里只有回车会真正点火，空格只切油门） |
 | POST | `/ui_click` | 按索引点击界面元素（游戏内派发） |
 | POST | `/click` | 按归一化坐标点击（游戏内派发） |
 | POST | `/click_raw` | 同上，但用 Win32 模拟真实鼠标（**会抢鼠标与焦点**，仅排障用） |
@@ -160,10 +160,19 @@ pwsh -File build.ps1
 ### `/state` 返回示例
 
 ```json
-{"ok":true,"in_world":false,"flying":false,"rocket":"","planet":"",
- "height":0,"speed":0,"velocity_x":0,"velocity_y":0,
- "throttle":0,"throttle_on":false,"stage":-1,"has_control":false,"mass":0}
+{"ok":true,"in_world":true,"flying":true,"rocket":"","planet":"Earth",
+ "height":92.56,"speed":0,"velocity_x":0,"velocity_y":0,
+ "throttle":0.5,"throttle_on":false,"stage":-1,"has_control":true,"mass":1574.9,
+ "stages":{"count":11,"current_index":0,"current_parts":15,
+           "summary":"#1(15件) / #2(6件) / #3(2件)"},
+ "propulsion":{"thrust":120,"twr":0.139,"engines_on":1,"engines_total":1,
+               "fuel_percent":0.994,"rcs_fuel_percent":null,"isp":240}}
 ```
+
+> `stages` 来自 `Staging.stages`（`List<Stage>`），`/build` 里也会统计它；
+> `propulsion` 的液体燃料取自 `Rocket.resources`，固体助推器另算。
+> 顶层的 `stage`（整数）**永远是 -1** —— `Staging` 上没有 `stageId` 这个成员，
+> 别再依赖它，请改用 `stages`。
 
 ### `/ui` 返回示例
 
@@ -312,12 +321,12 @@ SFS.Parts.PartSave { name, position, orientation, NUMBER_VARIABLES, TEXT_VARIABL
 | 平移与俯仰（需先开 RCS） | W / A / S / D | 87 / 65 / 83 / 68 |
 | 油门加大 / 减小 | Shift / Ctrl | 16 / 17 |
 | RCS 开关 | R | 82 |
-| 点火 / 执行下一级 | 空格 | 32 |
-| 分级控制程序 | 回车 | 13 |
+| 点火 / 分离 / 执行下一级（分级程序） | 回车 | 13 |
+| 油门闸门开关（**不点火**） | 空格 | 32 |
 | 返回 | Esc | 27 |
 
 > 油门与分级也可以完全不走按键：`POST /command` 的
-> `set_throttle` / `throttle_on` / `throttle_off` / `stage` / `rcs_toggle`
+> `set_throttle` / `throttle_on` / `throttle_off` / `ignite` / `stage` / `rcs_toggle`
 > 是直接改游戏状态的，最可靠。
 
 ## 已验证的能力（实机测试）

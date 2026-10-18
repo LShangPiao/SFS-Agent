@@ -251,20 +251,22 @@ namespace SfsAgent
                 return;
             }
 
-            if (name == "stage" || name == "ignite")
+            if (name == "stage" || name == "ignite" || name == "staging_program")
             {
-                // 分级由游戏自己的逻辑决定（哪一级、何时点火、音效、UI 刷新…），
-                // 与其猜内部实现，不如注入一次空格键，让游戏按原生流程执行。
+                // 实测（SFS 1.6.00.16）：**回车才是「点火 / 执行分级控制程序」**，
+                // 空格只是切换油门闸门（Rocket.throttle.throttleOn）。
+                // 早先这里注入空格，结果油门开关被反复拨动、引擎一台都不点火，
+                // 用户看到的就是「油门拉满但推力是 0」。所以这三个命令统一走回车。
                 // 注意：旧实现会在 Staging 上找“含 stag 的无参方法”，
                 // 结果命中 RemoveEmptyStages()，属于明确的 bug，已移除。
-                BridgeKeys.Enqueue(KeyCodeSpace, 140);
+                BridgeKeys.Enqueue(KeyCodeEnter, 140);
                 return;
             }
 
-            if (name == "staging_program")
+            if (name == "throttle_toggle")
             {
-                // 回车：执行火箭分级控制程序
-                BridgeKeys.Enqueue(KeyCodeEnter, 140);
+                // 空格：切换油门闸门
+                BridgeKeys.Enqueue(KeyCodeSpace, 140);
                 return;
             }
 
