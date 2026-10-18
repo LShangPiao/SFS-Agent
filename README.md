@@ -142,7 +142,7 @@ pwsh -File build.ps1
 | POST | `/blueprint_load` | 按名字加载整枚蓝图到建造场景（造火箭最可靠的路径） |
 | GET | `/ui` | 当前界面可点击元素清单 |
 | GET | `/screenshot` | 抓取画面，返回 PNG |
-| POST | `/command` | 飞行指令：`set_throttle` / `throttle_on` / `throttle_off` / `ignite` / `stage` / `staging_program` / `rcs_on` / `rcs_off` / `rcs_toggle`（`ignite` / `stage` / `staging_program` 都注入**回车**——SFS 里只有回车会真正点火，空格只切油门） |
+| POST | `/command` | 飞行指令：`set_throttle` / `throttle_on` / `throttle_off` / `ignite` / `stage` / `staging_program` / `engine_on` / `rcs_on` / `rcs_off` / `rcs_toggle`（`ignite` / `stage` / `staging_program` 都注入**回车**——SFS 里只有回车会真正点火，空格只切油门） |
 | POST | `/ui_click` | 按索引点击界面元素（游戏内派发） |
 | POST | `/click` | 按归一化坐标点击（游戏内派发） |
 | POST | `/click_raw` | 同上，但用 Win32 模拟真实鼠标（**会抢鼠标与焦点**，仅排障用） |

@@ -92,13 +92,48 @@ namespace SfsAgent
             {
                 return "";
             }
+
+            // 优先用 PartSave.name —— 这是零件在蓝图里的真实名字（"Fuel Tank" 之类）。
+            // 直接读 Part.Name 在**刚生成的零件**上会拿到 TranslationVariable 对象，
+            // Convert.ToString 之后变成 "SFS.Translations.TranslationVariable"，
+            // 把 part_kinds 整个污染掉（实测踩过）。
+            try
+            {
+                Type partSaveType = BridgeState.FindType("SFS.Parts.PartSave");
+                if (partSaveType != null)
+                {
+                    MethodInfo createSaves = partSaveType.GetMethod(
+                        "CreateSaves",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                    if (createSaves != null)
+                    {
+                        Array one = Array.CreateInstance(part.GetType(), 1);
+                        one.SetValue(part, 0);
+                        Array saves = createSaves.Invoke(null, new object[] { one }) as Array;
+                        if (saves != null && saves.Length > 0)
+                        {
+                            string s = Convert.ToString(
+                                BridgeState.Get(saves.GetValue(0), "name"),
+                                CultureInfo.InvariantCulture);
+                            if (IsUsableName(s))
+                            {
+                                return s.Trim();
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+
             try
             {
                 object name = BridgeState.Get(part, "Name");
                 if (name != null)
                 {
                     string s = Convert.ToString(name, CultureInfo.InvariantCulture);
-                    if (!string.IsNullOrEmpty(s))
+                    if (IsUsableName(s))
                     {
                         return s.Trim();
                     }
@@ -117,12 +152,34 @@ namespace SfsAgent
                     value = dn;
                 }
                 string s = Convert.ToString(value, CultureInfo.InvariantCulture);
-                return s == null ? "" : s.Trim();
+                return IsUsableName(s) ? s.Trim() : "";
             }
             catch
             {
                 return "";
             }
+        }
+
+        /// <summary>过滤掉「类型名冒充零件名」的情况。</summary>
+        private static bool IsUsableName(string s)
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return false;
+            }
+            string t = s.Trim();
+            if (t.Length == 0)
+            {
+                return false;
+            }
+            if (t.StartsWith("SFS.", StringComparison.Ordinal)
+                || t.StartsWith("UnityEngine.", StringComparison.Ordinal)
+                || t.StartsWith("System.", StringComparison.Ordinal))
+            {
+                return false;
+            }
+            // 类型名不带空格、带点；零件显示名一般有空格或没有点
+            return t.IndexOf('.') < 0;
         }
 
         private static double GetPartMass(object part)
@@ -276,6 +333,13 @@ namespace SfsAgent
                     stagingObj = FindBuildStaging();
                 }
                 stageCount = CountStages(stagingObj);
+
+                // 连通性是按需要算的：它是 O(n²)，不能每帧都跑
+                if (connectivityRequested)
+                {
+                    connectivityRequested = false;
+                    ComputeConnectivity(parts);
+                }
             }
             catch (Exception ex)
             {
@@ -368,6 +432,202 @@ namespace SfsAgent
             return 0;
         }
 
+        // -- 连通性 -----------------------------------------------------------
+        //
+        // 「零件是不是连成一体」不能靠猜：SFS 在发射时是按**零件位置**重新拼装的，
+        // 位置差一点就是一堆悬空的零件。这里用每个零件的附着面算出包围盒，
+        // 然后把「包围盒相接」的零件并成一组，孤立的就是没接上的。
+
+        public static volatile bool connectivityRequested;
+        public static int looseCount;
+        public static int bodyCount;
+
+        public static void RequestConnectivity()
+        {
+            connectivityRequested = true;
+        }
+
+        private static void ComputeConnectivity(object[] parts)
+        {
+            looseCount = 0;
+            bodyCount = 0;
+            if (parts == null || parts.Length == 0 || parts.Length > 600)
+            {
+                return;
+            }
+
+            int n = parts.Length;
+            double[] minX = new double[n];
+            double[] maxX = new double[n];
+            double[] minY = new double[n];
+            double[] maxY = new double[n];
+            bool[] has = new bool[n];
+
+            for (int i = 0; i < n; i++)
+            {
+                double[] box = BoundingBox(parts[i]);
+                if (box == null)
+                {
+                    has[i] = false;
+                    continue;
+                }
+                has[i] = true;
+                minX[i] = box[0];
+                minY[i] = box[1];
+                maxX[i] = box[2];
+                maxY[i] = box[3];
+                // 完全没有面积的零件（单点）给一点余量，避免永远判成孤立
+                if (maxX[i] - minX[i] < 0.01)
+                {
+                    maxX[i] = minX[i] + 0.05;
+                }
+                if (maxY[i] - minY[i] < 0.01)
+                {
+                    maxY[i] = minY[i] + 0.05;
+                }
+            }
+
+            int[] parent = new int[n];
+            for (int i = 0; i < n; i++)
+            {
+                parent[i] = i;
+            }
+
+            const double Margin = 0.08;
+            for (int i = 0; i < n; i++)
+            {
+                if (!has[i])
+                {
+                    continue;
+                }
+                for (int j = i + 1; j < n; j++)
+                {
+                    if (!has[j])
+                    {
+                        continue;
+                    }
+                    if (maxX[i] + Margin < minX[j] || maxX[j] + Margin < minX[i]
+                        || maxY[i] + Margin < minY[j] || maxY[j] + Margin < minY[i])
+                    {
+                        continue;
+                    }
+                    Union(parent, i, j);
+                }
+            }
+
+            Dictionary<int, int> sizes = new Dictionary<int, int>();
+            for (int i = 0; i < n; i++)
+            {
+                if (!has[i])
+                {
+                    continue;
+                }
+                int root = Find(parent, i);
+                if (sizes.ContainsKey(root))
+                {
+                    sizes[root] = sizes[root] + 1;
+                }
+                else
+                {
+                    sizes[root] = 1;
+                }
+            }
+            bodyCount = sizes.Count;
+            int loose = 0;
+            foreach (KeyValuePair<int, int> kv in sizes)
+            {
+                if (kv.Value == 1)
+                {
+                    loose++;
+                }
+            }
+            looseCount = loose;
+        }
+
+        /// <summary>用附着面求零件的包围盒：{minX, minY, maxX, maxY}。</summary>
+        private static double[] BoundingBox(object part)
+        {
+            if (part == null)
+            {
+                return null;
+            }
+            try
+            {
+                MethodInfo m = part.GetType().GetMethod(
+                    "GetAttachmentSurfacesWorld",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    Type.EmptyTypes,
+                    null);
+                if (m == null)
+                {
+                    return null;
+                }
+                Array arr = m.Invoke(part, null) as Array;
+                if (arr == null || arr.Length == 0)
+                {
+                    return null;
+                }
+                double minX = double.MaxValue;
+                double minY = double.MaxValue;
+                double maxX = double.MinValue;
+                double maxY = double.MinValue;
+                bool any = false;
+                for (int i = 0; i < arr.Length; i++)
+                {
+                    object line = arr.GetValue(i);
+                    object s = BridgeState.Get(line, "start");
+                    object e = BridgeState.Get(line, "end");
+                    if (s == null || e == null)
+                    {
+                        continue;
+                    }
+                    double sx = BridgeState.ToDouble(BridgeState.Get(s, "x"), 0);
+                    double sy = BridgeState.ToDouble(BridgeState.Get(s, "y"), 0);
+                    double ex = BridgeState.ToDouble(BridgeState.Get(e, "x"), 0);
+                    double ey = BridgeState.ToDouble(BridgeState.Get(e, "y"), 0);
+                    if (sx < minX) { minX = sx; }
+                    if (ex < minX) { minX = ex; }
+                    if (sx > maxX) { maxX = sx; }
+                    if (ex > maxX) { maxX = ex; }
+                    if (sy < minY) { minY = sy; }
+                    if (ey < minY) { minY = ey; }
+                    if (sy > maxY) { maxY = sy; }
+                    if (ey > maxY) { maxY = ey; }
+                    any = true;
+                }
+                if (!any)
+                {
+                    return null;
+                }
+                return new double[] { minX, minY, maxX, maxY };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static int Find(int[] parent, int i)
+        {
+            while (parent[i] != i)
+            {
+                parent[i] = parent[parent[i]];
+                i = parent[i];
+            }
+            return i;
+        }
+
+        private static void Union(int[] parent, int a, int b)
+        {
+            int ra = Find(parent, a);
+            int rb = Find(parent, b);
+            if (ra != rb)
+            {
+                parent[rb] = ra;
+            }
+        }
+
         private static string JsonEscape(string s)
         {
             if (string.IsNullOrEmpty(s))
@@ -408,6 +668,8 @@ namespace SfsAgent
             sb.Append(",\"part_count\":").Append(partCount);
             sb.Append(",\"stage_count\":").Append(stageCount);
             sb.Append(",\"total_mass\":").Append(Num(totalMass));
+            sb.Append(",\"bodies\":").Append(bodyCount);
+            sb.Append(",\"loose_parts\":").Append(looseCount);
             sb.Append(",\"part_kinds\":[");
 
             for (int i = 0; i < partNames.Count; i++)

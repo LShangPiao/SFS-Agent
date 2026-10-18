@@ -355,6 +355,13 @@ namespace SfsAgent
                 catalogReady = true;
             }
 
+            // 上一次放置推迟下来的贴合，先在这里做掉（用上一帧建好的网格）。
+            if (pendingPart != null)
+            {
+                FinishPending();
+                return;
+            }
+
             Job job = null;
             lock (Gate)
             {
@@ -388,7 +395,7 @@ namespace SfsAgent
                 steps = "";
                 ResolveStack(job);
                 PlacedCount = PlacePart(job);
-                LastResult = "placed " + job.Name + " at (" + Num(job.X) + ", " + Num(job.Y)
+                LastResult = "placed " + job.Name + " at (" + Num(placedX) + ", " + Num(placedY)
                     + "), count=" + PlacedCount;
                 LastError = "";            }
             catch (Exception ex)
@@ -462,6 +469,11 @@ namespace SfsAgent
             {
                 object loaded = CallLoadParts(loaderType);
                 AddDictionary(loaded, "PartsLoader.LoadParts()");
+                // 顺手填进模板缓存，省得 FindTemplate 再调一次
+                if (loaded != null && cachedParts == null)
+                {
+                    cachedParts = loaded;
+                }
             }
 
             Dedupe();
@@ -828,14 +840,15 @@ namespace SfsAgent
         }
 
         private static object cachedParts;
-        private static bool cachedPartsTried;
 
         /// <summary>在主线程调用 PartsLoader.LoadParts() 并缓存返回值。</summary>
         private static object LoadedParts(Type loaderType)
         {
-            if (!cachedPartsTried)
+            // 只缓存「成功」的结果。以前这里有个 cachedPartsTried 一次性闸门，
+            // 只要第一次调用时零件库还没就绪（比如刚进游戏），就会把 null 永久缓存住，
+            // 于是目录里明明有 56 种零件，放零件却一律回「未知零件名」。
+            if (cachedParts == null)
             {
-                cachedPartsTried = true;
                 try
                 {
                     MethodInfo load = loaderType.GetMethod(
@@ -879,16 +892,45 @@ namespace SfsAgent
             }
         }
 
+        // 本次放置任务的基准零件与叠放方向。
+        // HTTP 线程只入队，主线程 Tick 里才真正解析，所以这几个字段
+        // 只在主线程读写，不需要加锁。
+        private static object stackAnchor;
+        private static string stackMode = "none";
+        private static double alignGap = -1;
+        private static double placedX;
+        private static double placedY;
+
+        // 贴合要推迟一帧：零件是 SpawnBlueprint 刚造出来的，**同一帧里
+        // GetAttachmentSurfacesWorld() 还是空的**（网格还没 RegenerateMesh），
+        // 实测会稳定地返回 align=noSurf。所以这一帧只登记，下一帧的 Tick
+        // 里再按几何量把它挪到位（HTTP 那边等 300ms，完全够）。
+        private static object pendingPart;
+        private static object pendingAnchor;
+        private static string pendingMode;
+        private static string pendingName;
+
         /// <summary>
-        /// 按「叠在已有零件的上面/下面/同一贴合点」自动算位置。
+        /// 选出这次要叠在哪个零件上，并把初始位置直接设成基准零件的位置。
         ///
-        /// 为什么需要：每个零件的高度不同（Fuel Tank 的 N.height 是 4.0，锥头、
-        /// 引擎都不一样）。**统一用固定间距会让零件之间留缝或重叠** ——
-        /// 实测后果是发射时上面的零件掉下来把火箭砸爆。
-        /// 正确位置 = 两者的贴合面重合，即 y = anchorY ± (anchorH + newH) / 2。
+        /// 为什么不再用「按零件高度算 y」：SFS 的零件高度差别很大，而且
+        /// N.height 只对一部分零件有意义（锥头是 size、整流罩是 width/height），
+        /// 算出来的间距经常差半米到一米 —— 表现就是零件一个个悬在空中、
+        /// 互相没贴上，发射时直接散架。**正确做法是把两个零件的贴合面重合**，
+        /// 所以这里只负责选基准，真正的贴合交给 AlignToAnchor 按几何量。
+        ///
+        /// stack 取值：
+        ///   top    叠在最上面那个零件的顶上（默认，往上长）
+        ///   bottom 接在最下面那个零件的底下（往下长，常用于装引擎）
+        ///   none   完全用调用方给的坐标
+        ///   auto   场景里有零件就按 top，没有就用调用方坐标
         /// </summary>
         private static void ResolveStack(Job job)
         {
+            stackAnchor = null;
+            stackMode = "none";
+            alignGap = -1;
+
             string mode = job.Stack == null ? "" : job.Stack.Trim().ToLowerInvariant();
             if (mode.Length == 0 || mode == "none")
             {
@@ -903,8 +945,19 @@ namespace SfsAgent
             object[] parts = BridgeState.FindObjects(partType);
             if (parts.Length == 0)
             {
-                steps += "stack=noAnchor;";
+                if (mode != "auto")
+                {
+                    steps += "stack=noAnchor;";
+                }
                 return;   // 场景里没零件，就用调用方给的坐标
+            }
+            if (mode == "auto")
+            {
+                mode = "top";
+            }
+            if (mode != "top" && mode != "bottom")
+            {
+                return;
             }
 
             object anchor = null;
@@ -932,29 +985,343 @@ namespace SfsAgent
             }
 
             object anchorPos = BridgeState.Get(anchor, "Position");
-            double ax = BridgeState.ToDouble(BridgeState.Get(anchorPos, "x"), 0);
+            stackAnchor = anchor;
+            stackMode = mode;
+            job.X = BridgeState.ToDouble(BridgeState.Get(anchorPos, "x"), 0);
+            job.Y = anchorY;
+            steps += "stack=" + mode + "@" + Num(job.X) + "," + Num(anchorY) + ";";
+        }
 
-            double anchorH = PartHeight(anchor);
-            double newH = TemplateHeight(job.Name);
-            if (anchorH <= 0 || newH <= 0)
+        /// <summary>
+        /// 把一个零件的所有附着面读成 {startX,startY,endX,endY}。
+        /// Part.GetAttachmentSurfacesWorld() 返回 Line2[]，是**世界坐标**，
+        /// 所以「零件放没放平、有没有贴身」可以直接用几何判定。
+        /// </summary>
+        private static List<double[]> Surfaces(object part)
+        {
+            List<double[]> list = new List<double[]>();
+            if (part == null)
             {
-                // 读不到高度就退化为「同一贴合点」（引擎贴罐底那种）
-                job.X = ax;
-                job.Y = anchorY;
-                steps += "stack=same(h=" + Num(anchorH) + "/" + Num(newH) + ");";
+                return list;
+            }
+            try
+            {
+                MethodInfo m = part.GetType().GetMethod(
+                    "GetAttachmentSurfacesWorld",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    Type.EmptyTypes,
+                    null);
+                if (m == null)
+                {
+                    return list;
+                }
+                Array arr = m.Invoke(part, null) as Array;
+                if (arr == null)
+                {
+                    return list;
+                }
+                for (int i = 0; i < arr.Length; i++)
+                {
+                    object line = arr.GetValue(i);
+                    object s = BridgeState.Get(line, "start");
+                    object e = BridgeState.Get(line, "end");
+                    if (s == null || e == null)
+                    {
+                        continue;
+                    }
+                    list.Add(new double[]
+                    {
+                        BridgeState.ToDouble(BridgeState.Get(s, "x"), 0),
+                        BridgeState.ToDouble(BridgeState.Get(s, "y"), 0),
+                        BridgeState.ToDouble(BridgeState.Get(e, "x"), 0),
+                        BridgeState.ToDouble(BridgeState.Get(e, "y"), 0),
+                    });
+                }
+            }
+            catch
+            {
+            }
+            return list;
+        }
+
+        /// <summary>
+        /// 按方向挑一个贴合面：top 要「朝上那一面」，bottom 要「朝下那一面」。
+        ///
+        /// **只看水平面**（两个端点 y 相同）。零件上还有大量竖着的侧挂面，
+        /// 它们的 y 中点可能比真正的顶面还高 —— 之前不区分方向，结果挑中了
+        /// 侧面，把三个油箱叠成了同一个位置（实测总高 2 m 而不是 12 m）。
+        /// 先按长度过滤（取最长的那一档），再按 y 挑上下。
+        /// </summary>
+        private static double[] PickSurface(List<double[]> surfaces, bool wantTop, double preferLen)
+        {
+            List<double[]> horiz = new List<double[]>();
+            List<double> lens = new List<double>();
+            double maxLen = 0;
+            for (int i = 0; i < surfaces.Count; i++)
+            {
+                double[] s = surfaces[i];
+                if (Math.Abs(s[3] - s[1]) > 0.05)
+                {
+                    continue;   // 竖直/斜的面，不参与上下叠放
+                }
+                double len = Math.Abs(s[2] - s[0]);
+                if (len <= 0.0001)
+                {
+                    continue;
+                }
+                horiz.Add(s);
+                lens.Add(len);
+                if (len > maxLen)
+                {
+                    maxLen = len;
+                }
+            }
+            if (horiz.Count == 0)
+            {
+                return null;
+            }
+
+            // 优先挑「和对面那条面差不多宽」的，这样顶面配顶面、底面配底面
+            List<int> pick = new List<int>();
+            if (preferLen > 0.0001)
+            {
+                for (int i = 0; i < horiz.Count; i++)
+                {
+                    if (Math.Abs(lens[i] - preferLen) <= 0.05)
+                    {
+                        pick.Add(i);
+                    }
+                }
+            }
+            if (pick.Count == 0)
+            {
+                for (int i = 0; i < horiz.Count; i++)
+                {
+                    if (lens[i] >= maxLen * 0.85)
+                    {
+                        pick.Add(i);
+                    }
+                }
+            }
+            if (pick.Count == 0)
+            {
+                for (int i = 0; i < horiz.Count; i++)
+                {
+                    pick.Add(i);
+                }
+            }
+
+            double[] best = null;
+            double bestY = 0;
+            for (int k = 0; k < pick.Count; k++)
+            {
+                double[] s = horiz[pick[k]];
+                double midY = (s[1] + s[3]) / 2.0;
+                if (best == null
+                    || (wantTop && midY > bestY)
+                    || (!wantTop && midY < bestY))
+                {
+                    best = s;
+                    bestY = midY;
+                }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// 把一个零件的所有附着面压成「包围盒」：{minY, maxY, minX, maxX}。
+        /// 叠放时只用 Y 的两个极值：最上面那圈和最下面那圈才是真正能贴合的地方。
+        /// </summary>
+        private static double[] Range(List<double[]> surfaces)
+        {
+            if (surfaces == null || surfaces.Count == 0)
+            {
+                return null;
+            }
+            double minY = double.MaxValue;
+            double maxY = double.MinValue;
+            double minX = double.MaxValue;
+            double maxX = double.MinValue;
+            for (int i = 0; i < surfaces.Count; i++)
+            {
+                double[] s = surfaces[i];
+                minY = Math.Min(minY, Math.Min(s[1], s[3]));
+                maxY = Math.Max(maxY, Math.Max(s[1], s[3]));
+                minX = Math.Min(minX, Math.Min(s[0], s[2]));
+                maxX = Math.Max(maxX, Math.Max(s[0], s[2]));
+            }
+            return new double[] { minY, maxY, minX, maxX };
+        }
+
+        /// <summary>
+        /// 把新零件的贴合面挪到基准零件的贴合面上（真的移动零件，不是估算）。
+        ///
+        /// 做法：新零件先和基准零件放在同一个位置，此时两边的附着面都在
+        /// 同一坐标系里，直接算两条线中点的差值就是需要平移的量。
+        /// 移完再读一次，返回残余缝隙（米的量级，0 表示严丝合缝）。
+        /// </summary>
+        private static double AlignToAnchor(object part, object anchor, string mode)
+        {
+            if (part == null || anchor == null)
+            {
+                return -1;
+            }
+            try
+            {
+                bool anchorTop = mode == "top";
+
+                // 用「轮廓极值」而不是某一条面来对齐。
+                // SFS 的附着面列表里既有真正的顶/底环，也有中段的侧面轮廓，
+                // 按「最宽 / 最高」挑面会挑到腰线：三个油箱叠成同一位置、
+                // 引擎和分离器重合，都是这么来的。直接拿最高点/最低点最稳。
+                double[] a = Range(Surfaces(anchor));
+                if (a == null)
+                {
+                    steps += "align=noSurfA;";
+                    return -1;
+                }
+                double[] b = Range(Surfaces(part));
+                if (b == null)
+                {
+                    steps += "align=noSurfB;";
+                    return -1;
+                }
+
+                // top：基准的上沿贴新零件的下沿；bottom：基准的下沿贴新零件的上沿
+                double targetY = anchorTop ? a[1] : a[0];
+                double fromY = anchorTop ? b[0] : b[1];
+                double dy = targetY - fromY;
+
+                steps += "anchorY=[" + Num(a[0]) + "," + Num(a[1])
+                    + "] partY=[" + Num(b[0]) + "," + Num(b[1]) + "];";
+
+                object pos = BridgeState.Get(part, "Position");
+                double px = BridgeState.ToDouble(BridgeState.Get(pos, "x"), 0);
+                double py = BridgeState.ToDouble(BridgeState.Get(pos, "y"), 0);
+                SetMember(part, "Position", MakeVector2(px, py + dy));
+
+                // 复测：移动之后再读一次，算残余间距
+                double[] b2 = Range(Surfaces(part));
+                double gap = b2 == null
+                    ? -1
+                    : Math.Abs(targetY - (anchorTop ? b2[0] : b2[1]));
+                steps += "align=" + mode + "(dy=" + Num(dy)
+                    + ",gap=" + Num(gap) + ");";
+                return gap;
+            }
+            catch (Exception ex)
+            {
+                steps += "align=" + ex.GetType().Name + ";";
+                return -1;
+            }
+        }
+
+        /// <summary>
+        /// 把推迟下来的贴合真正做掉（由下一帧的 Tick 调用）。
+        /// 读不到附着面时先逼一次 RegenerateMesh，再不行就退回「按高度估算」
+        /// —— 宁可差几十厘米，也不能让零件悬在半空。
+        /// </summary>
+        private static void FinishPending()
+        {
+            object part = pendingPart;
+            object anchor = pendingAnchor;
+            string mode = pendingMode ?? "top";
+            string name = pendingName ?? "?";
+
+            pendingPart = null;
+            pendingAnchor = null;
+            pendingMode = null;
+            pendingName = null;
+
+            if (part == null)
+            {
                 return;
             }
 
-            job.X = ax;
-            if (mode == "bottom")
+            if (Surfaces(part).Count == 0)
             {
-                job.Y = anchorY - (anchorH + newH) / 2.0;
+                RegenerateMesh(part);
             }
-            else
+
+            double gap = AlignToAnchor(part, anchor, mode);
+            if (gap < 0)
             {
-                job.Y = anchorY + (anchorH + newH) / 2.0;
+                gap = FallbackStack(part, anchor, mode, name);
             }
-            steps += "stack=" + mode + "(aH=" + Num(anchorH) + ",nH=" + Num(newH) + ");";
+            alignGap = gap;
+
+            try
+            {
+                object pos = BridgeState.Get(part, "Position");
+                placedX = BridgeState.ToDouble(BridgeState.Get(pos, "x"), placedX);
+                placedY = BridgeState.ToDouble(BridgeState.Get(pos, "y"), placedY);
+            }
+            catch
+            {
+            }
+
+            LastResult = "placed " + name + " at (" + Num(placedX) + ", " + Num(placedY)
+                + "), count=" + PlacedCount + (gap >= 0 ? ", gap=" + Num(gap) : "");
+        }
+
+        private static void RegenerateMesh(object part)
+        {
+            if (part == null)
+            {
+                return;
+            }
+            try
+            {
+                string[] names = new string[] { "RegenerateMesh", "InitializePart", "UpdateMesh" };
+                for (int i = 0; i < names.Length; i++)
+                {
+                    MethodInfo m = part.GetType().GetMethod(
+                        names[i],
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                        null,
+                        Type.EmptyTypes,
+                        null);
+                    if (m == null)
+                    {
+                        continue;
+                    }
+                    m.Invoke(part, null);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>兜底：附着面读不到时按零件高度把 y 挪开，至少不重叠。</summary>
+        private static double FallbackStack(object part, object anchor, string mode, string name)
+        {
+            try
+            {
+                double ah = PartHeight(anchor);
+                double bh = PartHeight(part);
+                if (bh < 0)
+                {
+                    bh = TemplateHeight(name);
+                }
+                if (ah <= 0 || bh <= 0)
+                {
+                    steps += "fallback=noHeight;";
+                    return -1;
+                }
+                double dy = (ah + bh) / 2.0 * (mode == "bottom" ? -1 : 1);
+                object pos = BridgeState.Get(part, "Position");
+                double px = BridgeState.ToDouble(BridgeState.Get(pos, "x"), 0);
+                double py = BridgeState.ToDouble(BridgeState.Get(pos, "y"), 0);
+                SetMember(part, "Position", MakeVector2(px, py + dy));
+                steps += "fallback=height(dy=" + Num(dy) + ");";
+                return -1;
+            }
+            catch
+            {
+                return -1;
+            }
         }
 
         /// <summary>从零件的 PartSave 里读 N.height。</summary>
@@ -1169,7 +1536,38 @@ namespace SfsAgent
             if (arr != null && arr.Length > 0)
             {
                 steps += "spawn=" + arr.Length + ";";
+
+                // 贴合：新零件先和基准零件同位置生成，再按附着面把两者贴死。
+                // 不做这一步的话，零件是「摆在那儿」而不是「接上了」——
+                // 表现就是一堆悬空的零件，发射瞬间散架。
+                // 注意这里是**登记**，真正的移动在下一帧的 FinishPending 里做。
+                if (stackAnchor != null && stackMode != "none")
+                {
+                    pendingPart = arr.GetValue(0);
+                    pendingAnchor = stackAnchor;
+                    pendingMode = stackMode;
+                    pendingName = job.Name;
+                    steps += "align=deferred;";
+                }
+
+                try
+                {
+                    object finalPos = BridgeState.Get(arr.GetValue(0), "Position");
+                    placedX = BridgeState.ToDouble(BridgeState.Get(finalPos, "x"), job.X);
+                    placedY = BridgeState.ToDouble(BridgeState.Get(finalPos, "y"), job.Y);
+                }
+                catch
+                {
+                    placedX = job.X;
+                    placedY = job.Y;
+                }
+
                 SetCamera(buildStateType, buildState, arr);
+            }
+            else
+            {
+                placedX = job.X;
+                placedY = job.Y;
             }
             return count;
         }
@@ -1275,6 +1673,13 @@ namespace SfsAgent
             StringBuilder sb = new StringBuilder(256);
             sb.Append("{\"ok\":").Append(LastError.Length == 0 && LastResult.Length > 0 ? "true" : "false");
             sb.Append(",\"placed\":").Append(PlacedCount);
+            sb.Append(",\"x\":").Append(Num(placedX));
+            sb.Append(",\"y\":").Append(Num(placedY));
+            if (stackMode != null && stackMode != "none")
+            {
+                sb.Append(",\"stack\":\"").Append(Esc(stackMode)).Append("\"");
+                sb.Append(",\"gap\":").Append(Num(alignGap));
+            }
             if (LastResult.Length > 0)
             {
                 sb.Append(",\"result\":\"").Append(Esc(LastResult)).Append("\"");

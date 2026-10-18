@@ -387,11 +387,9 @@ namespace SfsAgent
             }
             if (totalThrust > 0 && BridgeState.mass > 0)
             {
-                double g = LocalGravity();
-                if (g > 0)
-                {
-                    twr = totalThrust / (BridgeState.mass * g);
-                }
+                // SFS 的 EngineModule.thrust 单位是「吨力」，与游戏 HUD 上显示的 Thrust 一致；
+                // 吨力本来就等于「自身质量受的重力」，所以推重比直接相除，不能再乘 g。
+                twr = totalThrust / BridgeState.mass;
             }
         }
 
@@ -728,7 +726,9 @@ namespace SfsAgent
             sb.Append("}");
 
             sb.Append(",\"propulsion\":{");
-            sb.Append("\"thrust\":").Append(Num(totalThrust));
+            // EngineModule.thrust 是「吨力」（与游戏 HUD 的 Thrust 数字一致），这里换算成 kN 输出，
+            // 1 吨力 = 9.80665 kN。
+            sb.Append("\"thrust\":").Append(Num(totalThrust * 9.80665));
             sb.Append(",\"twr\":").Append(Num(twr));
             sb.Append(",\"engines_on\":").Append(activeEngines);
             sb.Append(",\"engines_total\":").Append(totalEngines);

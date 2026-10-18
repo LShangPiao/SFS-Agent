@@ -195,6 +195,10 @@ namespace SfsAgent
             }
             else if (path == "/build")
             {
+                // bodies / loose_parts 是 O(n²) 的，只在请求时才在主线程算一次，
+                // 这里置位后稍等一下让下一帧的 Capture() 把它算出来。
+                BridgeBuild.RequestConnectivity();
+                System.Threading.Thread.Sleep(120);
                 payload = BridgeBuild.ToJson();
             }
             else if (path == "/command" && method == "POST")

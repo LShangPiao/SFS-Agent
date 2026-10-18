@@ -1,4 +1,4 @@
-# 编译 N.E.K.O Bridge（SFS 代码模组）
+﻿# 编译 N.E.K.O Bridge（SFS 代码模组）
 # 使用 Windows 自带的 C# 5 编译器，引用 SFS 的游戏程序集。
 
 $ErrorActionPreference = "Stop"

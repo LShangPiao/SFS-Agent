@@ -4,6 +4,7 @@
 // 实际执行放在 MonoBehaviour.Update() 里。
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
@@ -23,6 +24,7 @@ namespace SfsAgent
         private static readonly object Gate = new object();
 
         public static string LastResult = "";
+        public static string LastEngineError = "";
 
         public static int QueueLength
         {
@@ -270,7 +272,141 @@ namespace SfsAgent
                 return;
             }
 
+            if (name == "engine_on" || name == "force_ignite")
+            {
+                // 程序化搭出来的火箭没有分级程序（Staging.stages 为空），
+                // 回车自然点不着火。这里直接调每个引擎自己的 EnableEngine()，
+                // 绕开分级：只要油门闸门开着，就会立刻产生推力。
+                int lit = IgniteAllEngines();
+                if (lit < 0)
+                {
+                    throw new Exception("没找到引擎（当前可能不在飞行中）");
+                }
+                if (lit == 0)
+                {
+                    throw new Exception("引擎没点着：" + LastEngineError);
+                }
+                LastResult = "engines=" + lit;
+                return;
+            }
+
             throw new Exception("unknown command: " + name);
+        }
+
+        // ── 直接点火 ────────────────────────────────────────────────────────
+
+        private static int IgniteAllEngines()
+        {
+            Type pcType = BridgeState.FindType("SFS.World.PlayerController");
+            object pc = pcType == null ? null : BridgeState.GetStatic(pcType, "main");
+            object playerLocal = pc == null ? null : BridgeState.Get(pc, "player");
+            object rocket = BridgeState.Unwrap(playerLocal);
+            if (rocket == null)
+            {
+                return 0;
+            }
+            // 模块挂在 rocket.partHolder.modules（key 是类型，value 是该类型的模块列表），
+            // 不是 rocket.parts —— 和遥测里 CaptureEngines() 走的是同一条路径。
+            object holder = BridgeState.Get(rocket, "partHolder");
+            if (holder == null)
+            {
+                return 0;
+            }
+            object modulesObj = BridgeState.Get(holder, "modules");
+            IDictionary modules = modulesObj as IDictionary;
+            if (modules == null)
+            {
+                return 0;
+            }
+
+            List<object> found = new List<object>();
+            foreach (DictionaryEntry entry in modules)
+            {
+                IEnumerable list = entry.Value as IEnumerable;
+                if (list == null)
+                {
+                    continue;
+                }
+                foreach (object mod in list)
+                {
+                    if (mod != null)
+                    {
+                        found.Add(mod);
+                    }
+                }
+            }
+
+            int lit = 0;
+            int engineCount = 0;
+            for (int i = 0; i < found.Count; i++)
+            {
+                object mod = found[i];
+                if (mod != null
+                    && mod.GetType().Name.IndexOf("EngineModule", StringComparison.Ordinal) >= 0)
+                {
+                    engineCount++;
+                }
+                lit += EnableEngine(mod);
+            }
+            return engineCount == 0 ? -1 : lit;
+        }
+
+        private static int EnableEngine(object module)
+        {
+            if (module == null)
+            {
+                return 0;
+            }
+            Type t = module.GetType();
+            if (t.Name.IndexOf("EngineModule", StringComparison.Ordinal) < 0)
+            {
+                return 0;
+            }
+
+            // 已经点着的就别再点：重复 EnableEngine 无益，而一旦退到 ToggleEngine
+            // 反而会把引擎关掉（早期版本的坑）。
+            object onRef = BridgeState.Get(module, "engineOn");
+            object onVal = BridgeState.Unwrap(onRef);
+            if (onVal is bool && (bool)onVal)
+            {
+                return 1;
+            }
+
+            Type loggerType = BridgeState.FindType("I_MsgLogger");
+            MethodInfo enable = null;
+            MethodInfo[] all = t.GetMethods(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i].Name != "EnableEngine")
+                {
+                    continue;
+                }
+                ParameterInfo[] ps = all[i].GetParameters();
+                if (ps.Length != 1)
+                {
+                    continue;
+                }
+                if (loggerType == null || ps[0].ParameterType == loggerType)
+                {
+                    enable = all[i];
+                    break;
+                }
+            }
+            if (enable == null)
+            {
+                return 0;
+            }
+            try
+            {
+                enable.Invoke(module, new object[] { null });
+                return 1;
+            }
+            catch (Exception ex)
+            {
+                LastEngineError = ex.GetType().Name + ": " + ex.Message;
+                return 0;
+            }
         }
 
         private const int KeyCodeSpace = 32;
