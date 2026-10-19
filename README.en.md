@@ -163,7 +163,7 @@ Listens on `127.0.0.1` only; not exposed to the LAN or the internet.
 | POST | `/blueprint_load` | Load a whole blueprint into the build scene by name (the most reliable way to build) |
 | GET | `/ui` | Currently clickable UI elements |
 | GET | `/screenshot` | Capture the current frame as PNG |
-| POST | `/command` | Flight commands: `set_throttle` / `throttle_on` / `throttle_off` / `ignite` / `stage` / `staging_program` / `engine_on` / `rcs_on` / `rcs_off` / `rcs_toggle` (`ignite` / `stage` / `staging_program` inject **Enter** — in SFS only Enter actually ignites engines; Space just toggles the throttle gate) |
+| POST | `/command` | Flight commands: `set_throttle` / `throttle_on` / `throttle_off` / `ignite` / `stage` / `staging_program` / `engine_on` / `rcs_on` / `rcs_off` / `rcs_toggle` (`ignite` calls `EnableEngine` and writes `throttle_Out` directly, bypassing staging; `stage` / `staging_program` inject **Enter**, which separates the current stage) |
 | POST | `/ui_click` | Click a UI element by index (in-game dispatch) |
 | POST | `/click` | Click by normalised coordinate (in-game dispatch) |
 | POST | `/click_raw` | Same, but via Win32 real-mouse simulation (**steals mouse and focus**; troubleshooting only) |
@@ -359,7 +359,7 @@ to `POST /key`):
 | Translate and pitch (RCS on first) | W / A / S / D | 87 / 65 / 83 / 68 |
 | Throttle up / down | Shift / Ctrl | 16 / 17 |
 | RCS toggle | R | 82 |
-| Ignite / separate / next stage (staging program) | Enter | 13 |
+| Staging program (**separates current stage + ignites next**) | Enter | 13 |
 | Throttle gate toggle (**does not ignite**) | Space | 32 |
 | Back | Esc | 27 |
 

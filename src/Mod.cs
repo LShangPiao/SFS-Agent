@@ -54,9 +54,12 @@ namespace SfsAgent
             get { return "1.5.9.8"; }
         }
 
+        /// <summary>语义化版本（不含 v 前缀），供 /ping 等运行时接口复用。</summary>
+        public const string Semver = "0.6.8";
+
         public override string ModVersion
         {
-            get { return "v0.6.4"; }
+            get { return "v" + Semver; }
         }
 
         public override string Description

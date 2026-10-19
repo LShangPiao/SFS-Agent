@@ -240,6 +240,9 @@ namespace SfsAgent
             int engineDebugSeen = 0;
             int boosterDebugSeen = 0;
 
+            // 油门系数：闸门关着时引擎即使点着也不出力。
+            double throttleFactor = ThrottleFactor(rocket);
+
             object holder = BridgeState.Get(rocket, "partHolder");
             if (holder == null)
             {
@@ -307,12 +310,15 @@ namespace SfsAgent
                         {
                             activeEngines++;
                         }
-                        // thrust 是 Composed_Float，取它的 Value / GetResult
+                        // thrust 是 Composed_Float，取它的 Value / GetResult。
+                        // 注意：它给的是**额定推力**，不含油门 —— 实测 50% 油门时
+                        // HUD 显示 Thrust 60t，而这里读到 120t。不乘油门就会报出
+                        // 「推重比 1.39、可以起飞」，实际只有 0.72，火箭一动不动。
                         object th = BridgeState.Get(mod, "thrust");
                         double t = ReadNumber(th, 0);
                         if (isOn == true)
                         {
-                            totalThrust += t;
+                            totalThrust += t * throttleFactor;
                         }
                         if (!ispKnown)
                         {
@@ -383,7 +389,9 @@ namespace SfsAgent
             // 推重比 = 推力 / (质量 × 当地重力)
             if (enginesDebug.Length > 0)
             {
-                enginesDebug += " | total=" + totalEngines + " raw=" + rawEngines;
+                enginesDebug += " | total=" + totalEngines + " raw=" + rawEngines
+                    + " tf=" + throttleFactor.ToString("0.###", CultureInfo.InvariantCulture)
+                    + " pct=" + BridgeState.throttlePercent.ToString("0.###", CultureInfo.InvariantCulture);
             }
             if (totalThrust > 0 && BridgeState.mass > 0)
             {
@@ -391,6 +399,35 @@ namespace SfsAgent
                 // 吨力本来就等于「自身质量受的重力」，所以推重比直接相除，不能再乘 g。
                 twr = totalThrust / BridgeState.mass;
             }
+        }
+
+        /// <summary>油门系数 0..1：闸门关着就是 0 —— 引擎点着也不出力。</summary>
+        private static double ThrottleFactor(object rocket)
+        {
+            object throttle = BridgeState.Get(rocket, "throttle");
+            if (throttle == null)
+            {
+                return 0;
+            }
+            object onVal = BridgeState.Unwrap(BridgeState.Get(throttle, "throttleOn"));
+            if (!(onVal is bool) || !(bool)onVal)
+            {
+                return 0;
+            }
+            double p = ReadNumber(BridgeState.Get(throttle, "throttlePercent"), 0);
+            if (p > 1.5)
+            {
+                p /= 100.0;
+            }
+            if (p < 0)
+            {
+                p = 0;
+            }
+            if (p > 1)
+            {
+                p = 1;
+            }
+            return p;
         }
 
         private static double ReadLiquidFuel(object rocket)

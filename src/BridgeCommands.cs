@@ -26,6 +26,10 @@ namespace SfsAgent
         public static string LastResult = "";
         public static string LastEngineError = "";
 
+        // 回车（分级控制程序）发出后，等若干帧再看有没有引擎真的点着。
+        // 没点着就退回「直接点燃所有引擎」，避免「回了 ok、火箭却不动」。
+        private static int igniteFallbackCountdown;
+
         public static int QueueLength
         {
             get
@@ -94,6 +98,7 @@ namespace SfsAgent
         /// <summary>在主线程执行排队中的指令。</summary>
         public static void Tick()
         {
+            PumpIgniteFallback();
             while (true)
             {
                 Command cmd;
@@ -253,14 +258,12 @@ namespace SfsAgent
                 return;
             }
 
-            if (name == "stage" || name == "ignite" || name == "staging_program")
+            if (name == "stage" || name == "staging_program")
             {
-                // 实测（SFS 1.6.00.16）：**回车才是「点火 / 执行分级控制程序」**，
-                // 空格只是切换油门闸门（Rocket.throttle.throttleOn）。
-                // 早先这里注入空格，结果油门开关被反复拨动、引擎一台都不点火，
-                // 用户看到的就是「油门拉满但推力是 0」。所以这三个命令统一走回车。
-                // 注意：旧实现会在 Staging 上找“含 stag 的无参方法”，
-                // 结果命中 RemoveEmptyStages()，属于明确的 bug，已移除。
+                // 回车 = 「执行分级控制程序」：会**分离当前级并点燃下一级**。
+                // 只在用户明确要「下一级 / 分级」时才按，别拿它当点火用 ——
+                // 实测在分级正常的火箭上按回车会把当前级的引擎分离掉，
+                // 结果就是「点着了」之后 engines_on 又变回 0。
                 BridgeKeys.Enqueue(KeyCodeEnter, 140);
                 return;
             }
@@ -272,11 +275,15 @@ namespace SfsAgent
                 return;
             }
 
-            if (name == "engine_on" || name == "force_ignite")
+            if (name == "engine_on" || name == "force_ignite" || name == "ignite")
             {
-                // 程序化搭出来的火箭没有分级程序（Staging.stages 为空），
-                // 回车自然点不着火。这里直接调每个引擎自己的 EnableEngine()，
-                // 绕开分级：只要油门闸门开着，就会立刻产生推力。
+                // 点火 = 直接调每个引擎自己的 EnableEngine()，绕开分级程序：
+                // 既适用于程序化搭出来、没有分级程序的火箭，也适用于分级正常的火箭，
+                // 而且不会像回车那样把当前级分离掉。
+                // 先把油门闸门打开，否则引擎点着了也不出力。
+                object throttle = BridgeState.Get(player, "throttle");
+                SetLocal(BridgeState.Get(throttle, "throttleOn"), 1);
+
                 int lit = IgniteAllEngines();
                 if (lit < 0)
                 {
@@ -297,29 +304,87 @@ namespace SfsAgent
 
         private static int IgniteAllEngines()
         {
+            // 模块挂在 rocket.partHolder.modules（key 是类型，value 是该类型的模块列表），
+            // 不是 rocket.parts —— 和遥测里 CaptureEngines() 走的是同一条路径。
+            List<object> engines = CollectEngineModules();
+            if (engines.Count == 0)
+            {
+                return -1;
+            }
+            int lit = 0;
+            for (int i = 0; i < engines.Count; i++)
+            {
+                lit += EnableEngine(engines[i]);
+            }
+            return lit;
+        }
+
+        /// <summary>主线程每帧调用：回车点不着时退回直接点火。</summary>
+        private static void PumpIgniteFallback()
+        {
+            if (igniteFallbackCountdown <= 0)
+            {
+                return;
+            }
+            igniteFallbackCountdown--;
+            if (igniteFallbackCountdown > 0)
+            {
+                return;
+            }
+            if (CountLitEngines() > 0)
+            {
+                return;
+            }
+            int lit = IgniteAllEngines();
+            if (lit > 0)
+            {
+                LastResult = "fallback engines=" + lit;
+                Main.Log("回车没有点着引擎，已直接点燃 " + lit + " 台");
+            }
+            else
+            {
+                LastResult = "fallback engines=0 " + LastEngineError;
+                Main.Log("点火失败：" + LastEngineError);
+            }
+        }
+
+        private static int CountLitEngines()
+        {
+            List<object> engines = CollectEngineModules();
+            int lit = 0;
+            for (int i = 0; i < engines.Count; i++)
+            {
+                object val = BridgeState.Unwrap(BridgeState.Get(engines[i], "engineOn"));
+                if (val is bool && (bool)val)
+                {
+                    lit++;
+                }
+            }
+            return lit;
+        }
+
+        private static List<object> CollectEngineModules()
+        {
+            List<object> found = new List<object>();
             Type pcType = BridgeState.FindType("SFS.World.PlayerController");
             object pc = pcType == null ? null : BridgeState.GetStatic(pcType, "main");
             object playerLocal = pc == null ? null : BridgeState.Get(pc, "player");
             object rocket = BridgeState.Unwrap(playerLocal);
             if (rocket == null)
             {
-                return 0;
+                return found;
             }
-            // 模块挂在 rocket.partHolder.modules（key 是类型，value 是该类型的模块列表），
-            // 不是 rocket.parts —— 和遥测里 CaptureEngines() 走的是同一条路径。
             object holder = BridgeState.Get(rocket, "partHolder");
             if (holder == null)
             {
-                return 0;
+                return found;
             }
             object modulesObj = BridgeState.Get(holder, "modules");
             IDictionary modules = modulesObj as IDictionary;
             if (modules == null)
             {
-                return 0;
+                return found;
             }
-
-            List<object> found = new List<object>();
             foreach (DictionaryEntry entry in modules)
             {
                 IEnumerable list = entry.Value as IEnumerable;
@@ -329,26 +394,14 @@ namespace SfsAgent
                 }
                 foreach (object mod in list)
                 {
-                    if (mod != null)
+                    if (mod != null
+                        && mod.GetType().Name.IndexOf("EngineModule", StringComparison.Ordinal) >= 0)
                     {
                         found.Add(mod);
                     }
                 }
             }
-
-            int lit = 0;
-            int engineCount = 0;
-            for (int i = 0; i < found.Count; i++)
-            {
-                object mod = found[i];
-                if (mod != null
-                    && mod.GetType().Name.IndexOf("EngineModule", StringComparison.Ordinal) >= 0)
-                {
-                    engineCount++;
-                }
-                lit += EnableEngine(mod);
-            }
-            return engineCount == 0 ? -1 : lit;
+            return found;
         }
 
         private static int EnableEngine(object module)
@@ -365,47 +418,90 @@ namespace SfsAgent
 
             // 已经点着的就别再点：重复 EnableEngine 无益，而一旦退到 ToggleEngine
             // 反而会把引擎关掉（早期版本的坑）。
+            // 但**油门一定要补写**：engineOn 只是「点燃」标志，
+            // 真正决定出力的是 throttle_Out，不写它就会「点着了但一点推力都没有」。
             object onRef = BridgeState.Get(module, "engineOn");
             object onVal = BridgeState.Unwrap(onRef);
-            if (onVal is bool && (bool)onVal)
+            bool alreadyOn = onVal is bool && (bool)onVal;
+            if (!alreadyOn)
             {
-                return 1;
+                Type loggerType = BridgeState.FindType("I_MsgLogger");
+                MethodInfo enable = null;
+                MethodInfo[] all = t.GetMethods(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                for (int i = 0; i < all.Length; i++)
+                {
+                    if (all[i].Name != "EnableEngine")
+                    {
+                        continue;
+                    }
+                    ParameterInfo[] ps = all[i].GetParameters();
+                    if (ps.Length != 1)
+                    {
+                        continue;
+                    }
+                    if (loggerType == null || ps[0].ParameterType == loggerType)
+                    {
+                        enable = all[i];
+                        break;
+                    }
+                }
+                if (enable == null)
+                {
+                    return 0;
+                }
+                try
+                {
+                    enable.Invoke(module, new object[] { null });
+                }
+                catch (Exception ex)
+                {
+                    LastEngineError = ex.GetType().Name + ": " + ex.Message;
+                    return 0;
+                }
             }
 
-            Type loggerType = BridgeState.FindType("I_MsgLogger");
-            MethodInfo enable = null;
-            MethodInfo[] all = t.GetMethods(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            for (int i = 0; i < all.Length; i++)
-            {
-                if (all[i].Name != "EnableEngine")
-                {
-                    continue;
-                }
-                ParameterInfo[] ps = all[i].GetParameters();
-                if (ps.Length != 1)
-                {
-                    continue;
-                }
-                if (loggerType == null || ps[0].ParameterType == loggerType)
-                {
-                    enable = all[i];
-                    break;
-                }
-            }
-            if (enable == null)
-            {
-                return 0;
-            }
+            ApplyThrottle(module);
+            return 1;
+        }
+
+        /// <summary>把当前油门写进引擎的 throttle_Out，并让它重算一次推力。</summary>
+        private static void ApplyThrottle(object module)
+        {
             try
             {
-                enable.Invoke(module, new object[] { null });
-                return 1;
+                double pct = BridgeState.throttlePercent;
+                if (pct > 1.5)
+                {
+                    pct /= 100.0;
+                }
+                if (pct < 0)
+                {
+                    pct = 0;
+                }
+                if (pct > 1)
+                {
+                    pct = 1;
+                }
+
+                object outRef = BridgeState.Get(module, "throttle_Out");
+                if (outRef != null)
+                {
+                    SetLocal(outRef, pct);
+                }
+
+                // 部分版本要显式重算，否则推力表不会跟着油门变。
+                MethodInfo recalc = module.GetType().GetMethod(
+                    "RecalculateEngineThrottle",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (recalc != null && recalc.GetParameters().Length == 0)
+                {
+                    recalc.Invoke(module, null);
+                }
             }
             catch (Exception ex)
             {
                 LastEngineError = ex.GetType().Name + ": " + ex.Message;
-                return 0;
             }
         }
 
